@@ -8,6 +8,12 @@
 //! Build: wasm-pack build --target web --release --out-dir ../pkg
 
 mod graph;
+#[cfg(any(feature = "render", feature = "webgl"))]
+mod camera;
+#[cfg(feature = "webgl")]
+mod gl;
+#[cfg(any(feature = "render", feature = "webgl"))]
+mod host;
 #[cfg(feature = "render")]
 mod gpu;
 
@@ -40,21 +46,41 @@ impl Graph {
     pub fn centroids_ptr(&self) -> *const f32 { self.inner.centroids.as_ptr() }
 }
 
-/// Rust-owned renderer. `Stage::create` is async because adapter/device
-/// acquisition is; await it before the first `frame()`.
+#[cfg(feature = "render")]
+impl host::Scene for gpu::Renderer {
+    fn point_scale(&self) -> f32 { 1.1 }
+    fn resize(&mut self, w: u32, h: u32) { gpu::Renderer::resize(self, w, h) }
+    fn set_graph(&mut self, g: &G) { gpu::Renderer::set_graph(self, g) }
+    fn draw(&mut self, rot: [f32; 9], scale: f32, point_px: f32, simulate: bool) {
+        self.frame(rot, scale, point_px, simulate, 0.016)
+    }
+}
+
+#[cfg(feature = "webgl")]
+impl host::Scene for gl::Renderer {
+    // matches the page's JS WebGL2 path, which uses 1.5 * dpr for gl_PointSize
+    fn point_scale(&self) -> f32 { 1.5 }
+    fn resize(&mut self, w: u32, h: u32) { gl::Renderer::resize(self, w, h) }
+    fn set_graph(&mut self, g: &G) { gl::Renderer::set_graph(self, g) }
+    // WebGL2 has no compute, so there is no layout pass to run here.
+    fn draw(&mut self, rot: [f32; 9], scale: f32, point_px: f32, _simulate: bool) {
+        self.frame(rot, scale, point_px)
+    }
+}
+
+/// Rust-owned hero on WebGPU. `start` builds the pipeline, registers its own
+/// animation frame and input listeners, and runs until `stop()`.
 #[cfg(feature = "render")]
 #[wasm_bindgen]
 pub struct Stage {
-    renderer: gpu::Renderer,
-    nodes: usize,
-    edges: usize,
+    h: host::Handle<gpu::Renderer>,
 }
 
 #[cfg(feature = "render")]
 #[wasm_bindgen]
 impl Stage {
-    #[wasm_bindgen]
-    pub async fn create(
+    /// Async because adapter and device acquisition are.
+    pub async fn start(
         canvas: web_sys::HtmlCanvasElement,
         nodes: usize,
         clusters: usize,
@@ -63,25 +89,59 @@ impl Stage {
     ) -> Result<Stage, JsValue> {
         let g = G::generate(nodes, clusters, density, seed);
         let (w, h) = (canvas.width().max(1), canvas.height().max(1));
-        let target = wgpu::SurfaceTarget::Canvas(canvas);
-        let renderer = gpu::Renderer::new(target, w, h, &g)
+        let renderer = gpu::Renderer::new(wgpu::SurfaceTarget::Canvas(canvas.clone()), w, h, &g)
             .await
             .map_err(|e| JsValue::from_str(&e))?;
-        Ok(Stage { renderer, nodes: g.nodes, edges: g.edge_count() })
+        Ok(Stage { h: host::Handle::start(host::Host::new(renderer, canvas, &g, clusters, density, seed)) })
     }
 
-    pub fn node_count(&self) -> usize { self.nodes }
-    pub fn edge_count(&self) -> usize { self.edges }
+    pub fn stop(&mut self) { self.h.stop() }
+    pub fn set_params(&self, nodes: usize, clusters: usize, density: f32) { self.h.set_params(nodes, clusters, density) }
+    /// Device tilt: a direct 1:1 look-around. The page owns the iOS permission
+    /// prompt, which has to happen inside a user gesture.
+    pub fn set_camera(&self, zoom: f32, drift_speed: f32, parallax: f32, mass: f32) {
+        self.h.set_camera(zoom, drift_speed, parallax, mass)
+    }
+    pub fn set_tilting(&self, on: bool) { self.h.set_tilting(on) }
+    /// Tilt input, both axes in -1..1. Ignored unless `set_tilting(true)`.
+    pub fn set_pointer(&self, x: f32, y: f32) { self.h.set_pointer(x, y) }
+    /// Run the WGSL force layout each frame. Off by default.
+    pub fn set_simulate(&self, on: bool) { self.h.set_simulate(on) }
+    pub fn node_count(&self) -> usize { self.h.nodes() }
+    pub fn edge_count(&self) -> usize { self.h.edges() }
+}
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.renderer.resize(width, height);
+/// The same hero on WebGL2. Same API as `Stage`, no wgpu, and nodes are real
+/// point sprites rather than expanded quads.
+#[cfg(feature = "webgl")]
+#[wasm_bindgen]
+pub struct GlStage {
+    h: host::Handle<gl::Renderer>,
+}
+
+#[cfg(feature = "webgl")]
+#[wasm_bindgen]
+impl GlStage {
+    /// Synchronous: WebGL2 has no adapter to await.
+    pub fn start(
+        canvas: web_sys::HtmlCanvasElement,
+        nodes: usize,
+        clusters: usize,
+        density: f32,
+        seed: u32,
+    ) -> Result<GlStage, JsValue> {
+        let g = G::generate(nodes, clusters, density, seed);
+        let renderer = gl::Renderer::new(&canvas, &g).map_err(|e| JsValue::from_str(&e))?;
+        Ok(GlStage { h: host::Handle::start(host::Host::new(renderer, canvas, &g, clusters, density, seed)) })
     }
 
-    /// `rot` is a column-major 3x3 rotation, 9 floats.
-    pub fn frame(&mut self, rot: &[f32], scale: f32, point_px: f32, simulate: bool, dt: f32) {
-        if rot.len() < 9 { return; }
-        let mut r = [0.0f32; 9];
-        r.copy_from_slice(&rot[..9]);
-        self.renderer.frame(r, scale, point_px, simulate, dt);
+    pub fn stop(&mut self) { self.h.stop() }
+    pub fn set_params(&self, nodes: usize, clusters: usize, density: f32) { self.h.set_params(nodes, clusters, density) }
+    pub fn set_camera(&self, zoom: f32, drift_speed: f32, parallax: f32, mass: f32) {
+        self.h.set_camera(zoom, drift_speed, parallax, mass)
     }
+    pub fn set_tilting(&self, on: bool) { self.h.set_tilting(on) }
+    pub fn set_pointer(&self, x: f32, y: f32) { self.h.set_pointer(x, y) }
+    pub fn node_count(&self) -> usize { self.h.nodes() }
+    pub fn edge_count(&self) -> usize { self.h.edges() }
 }

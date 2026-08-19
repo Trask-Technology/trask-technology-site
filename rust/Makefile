@@ -15,17 +15,21 @@ PORT  ?= 8000
 CARGO    := env -u RUSTFLAGS cargo
 WASMPACK := env -u RUSTFLAGS wasm-pack
 
-.PHONY: all wasm wasm-lite check clean serve tools help
+.PHONY: all wasm wasm-gl wasm-lite check clean serve tools help
 
 all: wasm
 
-## wasm       Full bundle: Graph + Stage, the wgpu/WebGPU renderer (~200 KB).
+## wasm       Both renderers: Stage (wgpu/WebGPU) + GlStage (WebGL2).
 wasm:
-	$(WASMPACK) build --target web --release --out-dir $(PKG)
+	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --features webgl
+
+## wasm-gl    WebGL2 only: GlStage via glow, no wgpu. For visitors with no WebGPU.
+wasm-gl:
+	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --no-default-features --features webgl
 
 ## wasm-lite  Generation only: Graph alone, no wgpu, no Stage (~27 KB).
 wasm-lite:
-	$(WASMPACK) build --target web --release --no-default-features --out-dir $(PKG)
+	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --no-default-features
 
 ## check      Type-check against wasm32 without emitting a bundle.
 check:

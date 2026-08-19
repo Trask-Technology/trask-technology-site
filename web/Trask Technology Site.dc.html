@@ -201,6 +201,9 @@ class Component extends DCLogic {
     if (this._onTilt) removeEventListener("deviceorientation", this._onTilt);
     if (this._onMotion) removeEventListener("devicemotion", this._onMotion);
     cancelAnimationFrame(this._raf);
+    clearInterval(this._statusT);
+    // detaches Rust's own rAF and input listeners
+    if (this.stage) { this.stage.stop(); this.stage = null; }
   }
 
   probeGL() {
@@ -303,21 +306,13 @@ class Component extends DCLogic {
     this.setState({ building: true });
     this._rebuildT = setTimeout(async () => {
       const n = this.state.nodes;
-      // The Rust path keeps its buffers on the GPU and never hands them back, so
-      // there is nothing to re-upload the way the WebGPU/WebGL branches below do.
-      // Tear the Stage down — freeing its device, buffers and wasm memory — and
-      // build a fresh one at the new size.
       if (this.stage) {
-        cancelAnimationFrame(this._raf);
-        const old = this.stage;
-        this.stage = null;
-        old.free();
-        if (await this.tryRustStage(n)) return;
-        // Could not rebuild it; start a renderer over from scratch rather than
-        // dropping into the branches below with no live context.
-        this.api = null;
-        this.setState({ building: false });
-        return this.initRender();
+        // Regenerate on the existing device — no adapter, device or surface
+        // teardown just to change the node count.
+        this.stage.set_params(n, 34, this.state.density);
+        this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
+        this.setState({ drawn: this.stage.node_count(), building: false });
+        return;
       }
       const g = await this.buildGraphBest(n, 34);
       this.setState({ building: false });
@@ -344,9 +339,10 @@ class Component extends DCLogic {
       // get a clean one for its own fallback path.
       if (!navigator.gpu) return this.noStage("navigator.gpu is undefined — browser has no WebGPU");
       const mod = await import("./pkg/trask_graph.js");
-      if (!mod.Stage) return this.noStage("pkg has no Stage export — built with --no-default-features");
-      if (!this.wgpuCanvas) return this.noStage("wgpuCanvas ref is not populated yet");
+      this._mod = mod;
       await mod.default();
+      if (!mod.Stage) return this.noStage("pkg has no Stage export — built without the render feature");
+      if (!this.wgpuCanvas) return this.noStage("wgpuCanvas ref is not populated yet");
       const cv = this.wgpuCanvas;
       const dpr = Math.min(devicePixelRatio || 1, 1.5);
       // The canvas is still display:none at this point (api is unset until the
@@ -355,12 +351,44 @@ class Component extends DCLogic {
       const cw = cv.clientWidth || (box && box.clientWidth) || innerWidth;
       const ch = cv.clientHeight || (box && box.clientHeight) || innerHeight;
       cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
-      this.stage = await mod.Stage.create(cv, n, 34, this.state.density, 1337);
+      this.stage = await mod.Stage.start(cv, n, 34, this.state.density, 1337);
       this.engine = "rust/wasm"; this.api = "rust/wgpu";
+      // the dc runtime supplies its own prop defaults (zoom 4), which are not
+      // the ?? fallbacks in this file — pass the real values through
+      this.stage.set_camera(this.props.zoom ?? 1.7, this.props.driftSpeed ?? 0.3,
+                            this.props.parallax ?? 0.07, this.props.mass ?? 1);
       this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
       this.setState({ drawn: this.stage.node_count(), building: false });
-      this.t0 = performance.now();
-      this.loop();
+      // Rust owns the frame loop and its own pointer/wheel listeners now, so
+      // there is no rAF here to hang the status refresh off.
+      clearInterval(this._statusT);
+      this._statusT = setInterval(() => this.forceUpdate(), 400);
+      return true;
+    } catch (e) { this.stage = null; return this.noStage(e); }
+  }
+
+  // Rust on WebGL2: same host, same camera, but nodes are real point sprites
+  // rather than expanded quads. Synchronous — there is no adapter to await.
+  async tryRustGl(n) {
+    try {
+      if (!this.glCanvas) return false;
+      // Do not rely on tryRustStage having imported: it returns before that when
+      // navigator.gpu is missing, which is exactly when this path is needed.
+      const mod = this._mod || await import("./pkg/trask_graph.js");
+      this._mod = mod;
+      await mod.default();
+      if (!mod.GlStage) return this.noStage("pkg has no GlStage export — built without the webgl feature");
+      const cv = this.glCanvas;
+      this.stage = mod.GlStage.start(cv, n, 34, this.state.density, 1337);
+      this.engine = "rust/wasm"; this.api = "rust/webgl2";
+      // the dc runtime supplies its own prop defaults (zoom 4), which are not
+      // the ?? fallbacks in this file — pass the real values through
+      this.stage.set_camera(this.props.zoom ?? 1.7, this.props.driftSpeed ?? 0.3,
+                            this.props.parallax ?? 0.07, this.props.mass ?? 1);
+      this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
+      this.setState({ drawn: this.stage.node_count(), building: false });
+      clearInterval(this._statusT);
+      this._statusT = setInterval(() => this.forceUpdate(), 400);
       return true;
     } catch (e) { this.stage = null; return this.noStage(e); }
   }
@@ -376,6 +404,7 @@ class Component extends DCLogic {
   async initRender() {
     const n = this.state.nodes;
     if (await this.tryRustStage(n)) return;
+    if (await this.tryRustGl(n)) return;
     const g = await this.buildGraphBest(n, 34);
     if (!this.gpuCanvas && !this.glCanvas) return;
     this.graph = g;
@@ -472,10 +501,12 @@ class Component extends DCLogic {
 
   loop = () => {
     this._raf = requestAnimationFrame(this.loop);
-    const cv = this.stage ? this.wgpuCanvas : this.gpuR ? this.gpuCanvas : this.glCanvas;
-    if (!cv || (!this.gpuR && !this.gl && !this.stage)) return;
+    const cv = this.gpuR ? this.gpuCanvas : this.glCanvas;
+    if (!cv || (!this.gpuR && !this.gl)) return;
     if (document.hidden || cv.getBoundingClientRect().bottom < 0) return;
-    if (!this.gpuR && !this.stage && cv.width !== Math.round(cv.clientWidth * Math.min(devicePixelRatio || 1, 1.5))) this.resize();
+
+
+    if (!this.gpuR && cv.width !== Math.round(cv.clientWidth * Math.min(devicePixelRatio || 1, 1.5))) this.resize();
     const gl = this.gl;
 
     const now = performance.now();
@@ -521,11 +552,6 @@ class Component extends DCLogic {
     this.ms = this.ms ? this.ms * 0.9 + dt * 1000 * 0.1 : dt * 1000;
     if (now - (this._reported || 0) > 400) { this._reported = now; this.forceUpdate(); }
 
-    if (this.stage) {
-      this.stage.resize(cv.clientWidth * dpr | 0, cv.clientHeight * dpr | 0);
-      this.stage.frame(new Float32Array(R), scale, 1.1 * dpr, false, 0.016);
-      return;
-    }
     if (this.gpuR) {
       this.gpuR.sim.on = false;
       this.gpuR.frame(R, fix, scale, 1.1 * dpr);
@@ -589,8 +615,10 @@ class Component extends DCLogic {
       // and flip as the screen rotates — remap into screen space first.
       this.mx = Math.max(-1, Math.min(1, (e.gamma || 0) / 38));
       this.my = Math.max(-1, Math.min(1, ((e.beta || 0) - 42) / 34));
+      if (this.stage) this.stage.set_pointer(this.mx, this.my);
     };
     addEventListener("deviceorientation", this._onTilt, { passive: true });
+    if (this.stage) this.stage.set_tilting(true);
     this.setState({ motion: "on" });
   };
 
@@ -642,12 +670,20 @@ class Component extends DCLogic {
       showMotionButton: full && this.coarse && this.state.motion !== "on" && this.state.motion !== "unavailable",
       graphEngine: [
         `layout: ${this.engine || "js"}`,
-        `sim: ${this.stage || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"}`,
+        `sim: ${(this.api === "rust/wgpu") || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"}`,
         `draw: ${renderer}`,
         `webgpu in browser: ${navigator.gpu ? "yes" : "no"}`,
         // Chrome only exposes navigator.gpu in a secure context: https, or
         // localhost/127.0.0.1 exactly. A LAN or WSL IP over http hides WebGPU.
         `secure context: ${isSecureContext ? "yes" : `no (${location.origin})`}`,
+        // Backing resolution decides how large a 1px line and a point sprite
+        // look, so a mismatch here is the first thing to check when one
+        // renderer's primitives look bigger than another's.
+        (() => {
+          const cv = this.api === "rust/wgpu" ? this.wgpuCanvas
+                   : this.api === "webgpu" ? this.gpuCanvas : this.glCanvas;
+          return cv ? `canvas: ${cv.width}x${cv.height} css ${cv.clientWidth}x${cv.clientHeight} dpr ${(devicePixelRatio || 1).toFixed(2)}` : null;
+        })(),
         this.stageWhy ? `no rust/wgpu: ${this.stageWhy}` : null,
         this.gpuWhy ? `no webgpu: ${this.gpuWhy}` : null,
       ].filter(Boolean).join(" · "),

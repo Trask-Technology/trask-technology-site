@@ -344,6 +344,69 @@ impl Renderer {
         })
     }
 
+    /// Swap in a freshly generated graph without tearing down the device.
+    /// Pipelines, layouts and the draw bind groups are size-independent, so only
+    /// the storage buffers and the sim bind group have to be rebuilt.
+    pub fn set_graph(&mut self, graph: &Graph) {
+        let pos = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pos"),
+            contents: bytemuck::cast_slice(&graph.pos),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+        let vel = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("vel"),
+            size: (graph.nodes * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let rest = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rest"),
+            contents: bytemuck::cast_slice(&graph.pos),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let off = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("csr_off"),
+            contents: bytemuck::cast_slice(&graph.csr_off),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let nbr = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("csr_nbr"),
+            contents: bytemuck::cast_slice(&graph.csr_nbr),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let cen = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("centroids"),
+            contents: bytemuck::cast_slice(&graph.centroids),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let idx = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("edges"),
+            contents: bytemuck::cast_slice(&graph.edges),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        self.sim_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sim_bind"),
+            layout: &self.sim_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: pos.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: vel.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: off.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: nbr.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: cen.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: self.sim_uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: rest.as_entire_binding() },
+            ],
+        });
+
+        self.pos = pos;
+        self.idx = idx;
+        self.nodes = graph.nodes as u32;
+        self.edge_indices = graph.edges.len() as u32;
+        self.clusters = graph.clusters as u32;
+        self.groups = (graph.nodes as u32 + WG - 1) / WG;
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 || (width == self.config.width && height == self.config.height) {
             return;
@@ -404,11 +467,12 @@ impl Renderer {
             cp.dispatch_workgroups(self.groups, 1, 1);
         }
 
-        // edges then nodes, each with its own alpha
-        for (slot, pipeline, alpha, is_nodes) in [
-            (DRAW_EDGES, &self.edge_pipeline, 0.035f32, false),
-            (DRAW_NODES, &self.node_pipeline, 0.5f32, true),
-        ] {
+        // Both passes' uniforms are staged before the submission either way, so
+        // write them up front and keep the drawing in ONE render pass. Splitting
+        // it in two costs a full store + reload of the colour attachment between
+        // them — pure bandwidth, scaling with pixel count, which at 5K dominates
+        // everything else in the frame.
+        for (slot, alpha) in [(DRAW_EDGES, 0.035f32), (DRAW_NODES, 0.5f32)] {
             self.queue.write_buffer(
                 &self.draw_uniform[slot],
                 0,
@@ -421,17 +485,16 @@ impl Renderer {
                     _pad: [0.0; 2],
                 }),
             );
+        }
+
+        {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("draw"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: if is_nodes {
-                            wgpu::LoadOp::Load
-                        } else {
-                            wgpu::LoadOp::Clear(wgpu::Color { r: 0.0824, g: 0.3098, b: 0.4118, a: 1.0 })
-                        },
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0824, g: 0.3098, b: 0.4118, a: 1.0 }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -439,17 +502,19 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.draw_bind[slot], &[]);
-            if is_nodes {
-                pass.set_vertex_buffer(0, self.quad.slice(..));
-                pass.set_vertex_buffer(1, self.pos.slice(..));
-                pass.draw(0..6, 0..self.nodes);
-            } else {
-                pass.set_vertex_buffer(0, self.pos.slice(..));
-                pass.set_index_buffer(self.idx.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..self.edge_indices, 0, 0..1);
-            }
+
+            // edges first, nodes over them — same order as before, one pass
+            pass.set_pipeline(&self.edge_pipeline);
+            pass.set_bind_group(0, &self.draw_bind[DRAW_EDGES], &[]);
+            pass.set_vertex_buffer(0, self.pos.slice(..));
+            pass.set_index_buffer(self.idx.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.edge_indices, 0, 0..1);
+
+            pass.set_pipeline(&self.node_pipeline);
+            pass.set_bind_group(0, &self.draw_bind[DRAW_NODES], &[]);
+            pass.set_vertex_buffer(0, self.quad.slice(..));
+            pass.set_vertex_buffer(1, self.pos.slice(..));
+            pass.draw(0..6, 0..self.nodes);
         }
 
         self.queue.submit(Some(enc.finish()));

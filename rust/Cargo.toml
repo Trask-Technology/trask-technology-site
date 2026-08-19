@@ -11,6 +11,9 @@ crate-type = ["cdylib", "rlib"]
 default = ["render"]
 # `render` pulls in wgpu; drop it for a generation-only wasm bundle.
 render = ["wgpu", "bytemuck", "web-sys", "wasm-bindgen-futures", "js-sys"]
+# WebGL2 renderer. Independent of `render`: it pulls no wgpu, so a webgl-only
+# bundle is a fraction of the size for visitors who have no WebGPU anyway.
+webgl = ["glow", "web-sys", "js-sys"]
 simd = []
 
 [dependencies]
@@ -18,6 +21,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
+glow = { version = "0.16", optional = true }
 # `webgpu`, not `webgl`: the layout pass is a compute shader and WebGL2 has none,
 # so a GL adapter could only fail at pipeline creation. Without WebGPU the
 # adapter request returns nothing and the page takes its JS fallback instead.
@@ -26,7 +30,12 @@ wgpu = { version = "22", optional = true, default-features = false, features = [
 [dependencies.web-sys]
 version = "0.3"
 optional = true
-features = ["HtmlCanvasElement", "Window", "Document"]
+features = [
+  "HtmlCanvasElement", "Window", "Document", "Performance", "Element", "DomRect",
+  "Event", "EventTarget", "MouseEvent", "WheelEvent", "AddEventListenerOptions",
+  "WebGl2RenderingContext", "WebGlProgram", "WebGlShader", "WebGlBuffer",
+  "WebGlVertexArrayObject", "WebGlUniformLocation",
+]
 
 [profile.release]
 opt-level = 3

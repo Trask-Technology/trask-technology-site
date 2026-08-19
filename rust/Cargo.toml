@@ -18,10 +18,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 bytemuck = { version = "1", features = ["derive"], optional = true }
-# `webgpu`, not `webgl`: the layout pass is a compute shader and WebGL2 has none,
-# so a GL adapter could only fail at pipeline creation. Without WebGPU the
-# adapter request returns nothing and the page takes its JS fallback instead.
-wgpu = { version = "22", optional = true, default-features = false, features = ["webgpu", "wgsl"] }
+wgpu = { version = "22", optional = true, default-features = false, features = ["webgl", "wgsl"] }
 
 [dependencies.web-sys]
 version = "0.3"

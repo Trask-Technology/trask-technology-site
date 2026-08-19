@@ -1,0 +1,32 @@
+[package]
+name = "trask_graph"
+version = "0.2.0"
+edition = "2021"
+description = "Graph generation, GPU force layout and rendering for the Trask Technology hero"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["render"]
+# `render` pulls in wgpu; drop it for a generation-only wasm bundle.
+render = ["wgpu", "bytemuck", "web-sys", "wasm-bindgen-futures", "js-sys"]
+simd = []
+
+[dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+wgpu = { version = "22", optional = true, default-features = false, features = ["webgl", "wgsl"] }
+
+[dependencies.web-sys]
+version = "0.3"
+optional = true
+features = ["HtmlCanvasElement", "Window", "Document"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

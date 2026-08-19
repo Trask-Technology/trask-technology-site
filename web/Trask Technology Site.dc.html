@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #154F69; font-family: Lato, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: #154F69; text-decoration: none; }
+  a:hover { color: #0e3849; }
+  ::selection { background: rgba(21,79,105,.2); }
+  input, textarea { font-family: Lato, Helvetica, Arial, sans-serif; }
+</style>
+</helmet>
+<template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#154F69"></rect><circle cx="38" cy="42" r="4" fill="#fff"></circle><circle cx="62" cy="34" r="3" fill="#fff"></circle><circle cx="58" cy="62" r="5" fill="#fff"></circle><circle cx="34" cy="64" r="3" fill="#fff"></circle><path d="M38 42 L62 34 M38 42 L58 62 M58 62 L34 64 M34 64 L38 42 M62 34 L58 62" stroke="#fff" stroke-opacity=".55" stroke-width="1"></path></svg></template>
+<div style="background: #fff">
+  <header style="position: fixed; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: flex-end; padding: 26px 48px; mix-blend-mode: normal">
+    <div style="display: flex; align-items: center; gap: 22px; flex-wrap: nowrap; justify-content: flex-end; min-width: 0">
+      <sc-if value="{{ showStatus }}" hint-placeholder-val="{{ true }}">
+        <div title="{{ graphEngine }}" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.75); white-space: nowrap; text-align: right; min-width: 210px">{{ graphStatus }}</div>
+      </sc-if>
+      <sc-if value="{{ showSliders }}" hint-placeholder-val="{{ true }}">
+      <label style="display: flex; align-items: center; gap: 8px; flex: none">
+        <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Nodes</span>
+        <input type="range" min="10000" max="200000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
+      </label>
+      <label style="display: flex; align-items: center; gap: 8px; flex: none">
+        <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Edges</span>
+        <input type="range" min="0.2" max="3" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
+      </label>
+      </sc-if>
+      <a href="#contact" style="font-weight: 400; font-size: 14px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.72); border-bottom: 1px solid rgba(255,255,255,.3); padding-bottom: 2px; white-space: nowrap; flex: none">Contact</a>
+    </div>
+  </header>
+
+  <section style="position: relative; min-height: 100vh; background: #154F69; overflow: hidden; display: flex; align-items: center">
+    <div style="{{ canvasWrapStyle }}">
+      <canvas ref="{{ gpuRef }}" style="{{ gpuCanvasStyle }}"></canvas>
+      <canvas ref="{{ glRef }}" style="{{ glCanvasStyle }}"></canvas>
+      <canvas ref="{{ fbRef }}" style="{{ fbCanvasStyle }}"></canvas>
+    </div>
+
+    <div style="{{ heroTextWrapStyle }}">
+      <div style="{{ heroTextStyle }}">
+        <h1 style="margin: 0; font-weight: 700; font-size: clamp(30px, 9vw, 58px); line-height: 1.05; letter-spacing: -.005em; color: #fff; white-space: nowrap">Trask Technology</h1>
+        <p style="margin: 14px 0 0; font-weight: 300; font-size: clamp(15px, 3.7vw, 24px); line-height: 1.3; letter-spacing: .01em; color: rgba(255,255,255,.74); white-space: nowrap">Graph intelligence</p>
+        <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px">
+          <sc-if value="{{ showRenderButton }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ renderFull }}" style="font-weight: 400; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.8); background: transparent; border: 1px solid rgba(255,255,255,.35); padding: 14px 22px; cursor: pointer">Render the full graph</button>
+          </sc-if>
+          <sc-if value="{{ showMotionButton }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ enableMotion }}" style="font-weight: 400; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.8); background: transparent; border: 1px solid rgba(255,255,255,.35); padding: 14px 22px; cursor: pointer">Tilt to look around</button>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="background: #fff; padding: 132px 48px 140px">
+    <div style="max-width: 1040px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.35fr; gap: 88px; align-items: start">
+      <div style="font-weight: 300; font-size: 13px; letter-spacing: .34em; text-transform: uppercase; color: rgba(21,79,105,.65); padding-top: 10px">What we do</div>
+      <div style="display: flex; flex-direction: column; gap: 30px">
+        <p style="margin: 0; font-weight: 300; font-size: 26px; line-height: 1.5; color: #1d2b30; text-wrap: pretty">General-purpose tools stop being useful exactly where the interesting data begins. We build the algorithms that carry on past that line.</p>
+        <p style="margin: 0; font-weight: 400; font-size: 17px; line-height: 1.75; color: #46545a; text-wrap: pretty">Trask Technology builds custom components for low-latency storage, retrieval and analysis of complex data at scale. The work is shaped around how the machine actually behaves — memory layout, cache behaviour, the real cost of a random access — and written in Rust.</p>
+        <p style="margin: 0; font-weight: 400; font-size: 17px; line-height: 1.75; color: #46545a; text-wrap: pretty">Our current research is in online advertising, where the data is behavioural, the graphs are large and the answer is due in milliseconds. Little of what we learn there is specific to it: the same methods hold wherever structure and scale matter more than convenience.</p>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 14px; padding-top: 34px; border-top: 1px solid #e6eaeb">
+          <div style="display: flex; flex-direction: column; gap: 9px">
+            <div style="font-weight: 700; font-size: 15px; color: #154F69">Algorithms</div>
+            <div style="font-weight: 400; font-size: 14px; line-height: 1.6; color: #6a767b">Data structures designed for the problem rather than adapted to it.</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 9px">
+            <div style="font-weight: 700; font-size: 15px; color: #154F69">Latency</div>
+            <div style="font-weight: 400; font-size: 14px; line-height: 1.6; color: #6a767b">Answers in milliseconds, at volumes that usually demand a cluster.</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 9px">
+            <div style="font-weight: 700; font-size: 15px; color: #154F69">Rust</div>
+            <div style="font-weight: 400; font-size: 14px; line-height: 1.6; color: #6a767b">Systems your own team can read, run and keep running.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" style="position: relative; background: #154F69; padding: 124px 48px 96px; overflow: hidden">
+    <img src="exports/trask-watermark-titlebox-white.png" alt="" style="position: absolute; right: -30px; bottom: -30px; top: auto; width: 480px; height: auto; opacity: .5; pointer-events: none; mask-image: linear-gradient(90deg, transparent 0%, #000 62%); -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 62%)" />
+    <div style="position: relative; max-width: 1040px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.35fr; gap: 88px; align-items: start">
+      <div style="display: flex; flex-direction: column; gap: 22px">
+        <div style="font-weight: 300; font-size: 13px; letter-spacing: .34em; text-transform: uppercase; color: rgba(255,255,255,.6)">Contact</div>
+        <p style="margin: 0; font-weight: 300; font-size: 24px; line-height: 1.5; color: #fff; max-width: 320px; text-wrap: pretty">Tell us the shape of your graph. We will tell you what it takes.</p>
+      </div>
+      <form onSubmit="{{ submit }}" style="display: flex; flex-direction: column; gap: 26px; max-width: 560px">
+        <label style="display: flex; flex-direction: column; gap: 9px">
+          <span style="font-weight: 400; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.75)">Company</span>
+          <input name="company" type="text" style="background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,.34); color: #fff; font-size: 17px; padding: 9px 2px; outline: none" style-focus="border-bottom-color: #fff" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 9px">
+          <span style="font-weight: 400; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.75)">Email</span>
+          <input name="email" type="email" style="background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,.34); color: #fff; font-size: 17px; padding: 9px 2px; outline: none" style-focus="border-bottom-color: #fff" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 9px">
+          <span style="font-weight: 400; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.75)">What you are working with</span>
+          <textarea name="message" rows="4" style="background: transparent; border: 0; border-bottom: 1px solid rgba(255,255,255,.34); color: #fff; font-size: 17px; padding: 9px 2px; outline: none; resize: vertical" style-focus="border-bottom-color: #fff"></textarea>
+        </label>
+        <div style="display: flex; align-items: center; gap: 20px; margin-top: 4px">
+          <button type="submit" style="font-weight: 700; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: #154F69; background: #fff; border: 0; padding: 15px 28px; cursor: pointer">Send</button>
+          <span style="font-weight: 300; font-size: 13px; color: rgba(255,255,255,.78)">Opens in your mail client</span>
+        </div>
+      </form>
+    </div>
+    <div style="position: relative; max-width: 1040px; margin: 108px auto 0; padding-top: 26px; border-top: 1px solid rgba(255,255,255,.18); display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap">
+      <div style="font-weight: 700; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: rgba(255,255,255,.8)">Trask Technology</div>
+      <div style="font-weight: 300; font-size: 13px; letter-spacing: .06em; color: rgba(255,255,255,.55)">Denmark</div>
+    </div>
+
+  </section>
+
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;nodeCount&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10000,&quot;min&quot;:2000,&quot;max&quot;:400000,&quot;step&quot;:2000,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;zoom&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:4,&quot;min&quot;:1,&quot;max&quot;:8,&quot;step&quot;:0.5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;driftSpeed&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.3,&quot;min&quot;:0,&quot;max&quot;:2,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;parallax&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.07,&quot;min&quot;:0,&quot;max&quot;:0.4,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;mass&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1,&quot;min&quot;:0.3,&quot;max&quot;:3,&quot;step&quot;:0.1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;,&quot;unit&quot;:&quot;×&quot;}}">
+class Component extends DCLogic {
+  state = { variant: "b", mode: "pending", drawn: 0, nodes: 50000, density: 1, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
+
+  componentDidMount() {
+    this.glCanvas = null; this.fbCanvas = null;
+    this.coarse = matchMedia("(pointer: coarse)").matches;
+    // Phones handle this fine — only bail on no WebGL2, very few cores, or reduced motion.
+    const weak = !this.probeGL() ||
+      (navigator.hardwareConcurrency || 2) < 4 ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (weak) { this.setState({ mode: "static" }, () => this.drawFallback()); }
+    else this.setState({ mode: "full" }, () => this.initRender());
+    this.mx = 0; this.my = 0; this.pmx = 0; this.pmy = 0;
+    this._onMove = e => {
+      this.mx = (e.clientX / innerWidth - 0.5) * 2;
+      this.my = (e.clientY / innerHeight - 0.5) * 2;
+    };
+    addEventListener("pointermove", this._onMove, { passive: true });
+
+    // Wheel dollies the camera through the graph while the hero is in view;
+    // at either depth limit the page takes the scroll back over.
+    this.dolly = 1; this.dollyTarget = 1; this.dv = 0;
+    this._onWheel = e => {
+      if (scrollY > 40) return;
+      const fwd = e.deltaY > 0;
+      if ((fwd && this.dollyTarget >= 1.45) || (!fwd && this.dollyTarget <= 1)) return;
+      e.preventDefault();
+      this.dollyTarget = Math.max(1, Math.min(1.45, this.dollyTarget * (1 + e.deltaY * 0.0006)));
+    };
+    addEventListener("wheel", this._onWheel, { passive: false });
+    this._onResize = () => {
+      const narrow = innerWidth < 880, tiny = innerWidth < 700;
+      if (narrow !== this.state.narrow || tiny !== this.state.tiny) this.setState({ narrow, tiny });
+      if (this.state.mode !== "full") { this.drawFallback(); return; }
+      if (this.gpuR) this.gpuR.resize(); else this.resize();
+    };
+    addEventListener("resize", this._onResize);
+    addEventListener("orientationchange", this._onResize);
+    visualViewport?.addEventListener("resize", this._onResize);
+    // catch layout-driven size changes the window events miss
+    this._ro = new ResizeObserver(() => this._onResize());
+    if (this.gpuCanvas) this._ro.observe(this.gpuCanvas);
+    if (this.glCanvas) this._ro.observe(this.glCanvas);
+  }
+
+  componentWillUnmount() {
+    removeEventListener("resize", this._onResize);
+    removeEventListener("orientationchange", this._onResize);
+    visualViewport?.removeEventListener("resize", this._onResize);
+    this._ro?.disconnect();
+
+    removeEventListener("pointermove", this._onMove);
+    removeEventListener("wheel", this._onWheel);
+    if (this._onTilt) removeEventListener("deviceorientation", this._onTilt);
+    if (this._onMotion) removeEventListener("devicemotion", this._onMotion);
+    cancelAnimationFrame(this._raf);
+  }
+
+  probeGL() {
+    try { return !!document.createElement("canvas").getContext("webgl2"); } catch (e) { return false; }
+  }
+
+  // ---- graph generation: clustered 3-D point cloud with mostly intra-cluster edges
+  buildGraph(n, clusters, density = this.state.density) {
+    let s = 1337;
+    const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(6.283185 * v); };
+    const cx = new Float32Array(clusters), cy = new Float32Array(clusters), cz = new Float32Array(clusters);
+    for (let c = 0; c < clusters; c++) {
+      const t = rnd() * 6.283185, ph = Math.acos(2 * rnd() - 1), r = 0.45 + 0.55 * Math.cbrt(rnd());
+      cx[c] = r * Math.sin(ph) * Math.cos(t); cy[c] = r * Math.sin(ph) * Math.sin(t) * 0.72; cz[c] = r * Math.cos(ph);
+    }
+    const pos = new Float32Array(n * 3), owner = new Uint16Array(n);
+    const members = Array.from({ length: clusters }, () => []);
+    for (let i = 0; i < n; i++) {
+      const c = Math.floor(rnd() * clusters), sd = 0.07 + 0.06 * rnd();
+      pos[i * 3] = cx[c] + gauss() * sd; pos[i * 3 + 1] = cy[c] + gauss() * sd * 0.85; pos[i * 3 + 2] = cz[c] + gauss() * sd;
+      owner[i] = c; members[c].push(i);
+    }
+    const idx = [];
+    for (let c = 0; c < clusters; c++) {
+      const m = members[c];
+      for (let k = 0; k < m.length; k++) {
+        const a = m[k];
+        const b = m[(k + 1 + Math.floor(rnd() * Math.min(9, m.length - 1))) % m.length];
+        if (a !== b) idx.push(a, b);
+        const extra = Math.min(4, Math.round(density * 1.2));
+        for (let x = 0; x < extra; x++) {
+          if (rnd() > 0.22 * density) continue;
+          const d = m[Math.floor(rnd() * m.length)];
+          if (d !== a) idx.push(a, d);
+        }
+      }
+      // a few bridges between clusters
+      for (let k = 0; k < 5; k++) {
+        const other = members[Math.floor(rnd() * clusters)];
+        if (other.length && m.length) idx.push(m[Math.floor(rnd() * m.length)], other[Math.floor(rnd() * other.length)]);
+      }
+    }
+    const centroids = new Float32Array(clusters * 4);
+    for (let c = 0; c < clusters; c++) {
+      centroids[c * 4] = cx[c]; centroids[c * 4 + 1] = cy[c]; centroids[c * 4 + 2] = cz[c];
+    }
+    const idxA = new Uint32Array(idx);
+    return { pos, idx: idxA, n, owner, clusters, centroids, ...this.buildCSR(idxA, n) };
+  }
+
+  // Adjacency in CSR so the compute shader can walk a node's neighbours with
+  // two loads and no branching.
+  buildCSR(idx, n) {
+    const deg = new Uint32Array(n);
+    for (let k = 0; k < idx.length; k++) deg[idx[k]]++;
+    const csrOff = new Uint32Array(n + 1);
+    for (let i = 0; i < n; i++) csrOff[i + 1] = csrOff[i] + deg[i];
+    const csrNbr = new Uint32Array(csrOff[n]);
+    const cursor = csrOff.slice(0, n);
+    for (let k = 0; k < idx.length; k += 2) {
+      const a = idx[k], b = idx[k + 1];
+      csrNbr[cursor[a]++] = b;
+      csrNbr[cursor[b]++] = a;
+    }
+    return { csrOff, csrNbr };
+  }
+
+  // Prefer the Rust/wasm generator (rust/README.md — wasm-pack build into ./pkg).
+  // Falls back to the JS generator when the wasm bundle has not been built.
+  async buildGraphBest(n, clusters) {
+    try {
+      const mod = await import("./pkg/trask_graph.js");
+      const wasm = await mod.default();
+      const g = new mod.Graph(n, clusters, this.state.density, 1337);
+      const nodes = g.node_count(), edgeCount = g.edge_count(), cl = g.cluster_count();
+      // Rust stores xyz + community index per node; split out what the drawing wants
+      const pos4 = new Float32Array(wasm.memory.buffer, g.positions_ptr(), nodes * 4);
+      const pos = new Float32Array(nodes * 3), owner = new Uint16Array(nodes);
+      for (let i = 0; i < nodes; i++) {
+        pos[i * 3] = pos4[i * 4]; pos[i * 3 + 1] = pos4[i * 4 + 1]; pos[i * 3 + 2] = pos4[i * 4 + 2];
+        owner[i] = pos4[i * 4 + 3];
+      }
+      const idx = new Uint32Array(wasm.memory.buffer, g.edges_ptr(), edgeCount * 2).slice();
+      const csrOff = new Uint32Array(wasm.memory.buffer, g.csr_off_ptr(), nodes + 1).slice();
+      const csrNbr = new Uint32Array(wasm.memory.buffer, g.csr_nbr_ptr(), g.csr_nbr_len()).slice();
+      const centroids = new Float32Array(wasm.memory.buffer, g.centroids_ptr(), cl * 4).slice();
+      this.engine = "rust/wasm";
+      return { pos, idx, n: nodes, owner, clusters: cl, centroids, csrOff, csrNbr };
+    } catch (e) {
+      this.engine = "js fallback";
+      return this.buildGraph(n, clusters);
+    }
+  }
+
+  // WebGPU where available (Chrome/Edge 113+, Firefox 141+, Safari 26+), WebGL2 otherwise.
+  // Regenerate and re-upload without tearing down the device/context.
+  rebuild = () => {
+    clearTimeout(this._rebuildT);
+    this.setState({ building: true });
+    this._rebuildT = setTimeout(async () => {
+      const n = this.state.nodes;
+      const g = await this.buildGraphBest(n, 34);
+      this.setState({ building: false });
+      this.graph = g;
+      if (this.gpuR) this.gpuR.setGraph(g);
+      else if (this.gl) {
+        const gl = this.gl;
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+        gl.bufferData(gl.ARRAY_BUFFER, g.pos, gl.STATIC_DRAW);
+        gl.bindVertexArray(this.vaoLine);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ebo);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.idx, gl.STATIC_DRAW);
+        gl.bindVertexArray(null);
+      } else { this.drawFallback(); return; }
+      this.setState({ drawn: g.n });
+    }, 160);
+  };
+
+  // Rust/wgpu owning the whole pipeline is the preferred path when built.
+  async tryRustStage(n) {
+    try {
+      const mod = await import("./pkg/trask_graph.js");
+      if (!mod.Stage || !this.gpuCanvas) return false;
+      await mod.default();
+      const cv = this.gpuCanvas;
+      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+      cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
+      this.stage = await mod.Stage.create(cv, n, 34, this.state.density, 1337);
+      this.engine = "rust/wasm"; this.api = "rust/wgpu";
+      this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
+      this.setState({ drawn: this.stage.node_count(), building: false });
+      this.t0 = performance.now();
+      this.loop();
+      return true;
+    } catch (e) { this.stage = null; return false; }
+  }
+
+  async initRender() {
+    const n = this.state.nodes;
+    if (await this.tryRustStage(n)) return;
+    const g = await this.buildGraphBest(n, 34);
+    if (!this.gpuCanvas && !this.glCanvas) return;
+    this.graph = g;
+    try {
+      const mod = await import("./gpu-renderer.js");
+      this.gpuR = await mod.createGPURenderer(this.gpuCanvas, g);
+    } catch (e) { this.gpuR = null; }
+    if (this.gpuR) {
+      this.api = "webgpu";
+      this.setState({ drawn: g.n });
+      this.t0 = performance.now();
+      this.loop();
+      return;
+    }
+    this.initGL(g);
+  }
+
+  initGL(g) {
+    const cv = this.glCanvas; if (!cv || this.gl) return;
+    const gl = cv.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "high-performance" });
+    if (!gl) { this.setState({ mode: "static" }, () => this.drawFallback()); return; }
+    this.gl = gl;
+    this.api = "webgl2";
+    const n = g.n;
+
+    const vs = `#version 300 es
+      in vec3 aPos; uniform mat3 uRot; uniform float uScale; uniform vec2 uFix; uniform float uPt;
+      out float vD;
+      void main(){
+        vec3 p = uRot * aPos;
+        float persp = 1.0 / (2.0 - p.z * 0.45);
+        vD = p.z;
+        gl_Position = vec4(p.xy * uScale * persp * uFix, 0.0, 1.0);
+        gl_PointSize = uPt * (0.75 + 0.6 * (p.z + 1.0));
+      }`;
+    const fsPoint = `#version 300 es
+      precision mediump float; in float vD; uniform float uA; out vec4 o;
+      void main(){
+        vec2 d = gl_PointCoord - 0.5;
+        if (dot(d, d) > 0.25) discard;
+        float f = 0.28 + 0.72 * smoothstep(-1.1, 1.0, vD);
+        o = vec4(1.0, 1.0, 1.0, uA * f);
+      }`;
+    const fsLine = `#version 300 es
+      precision mediump float; in float vD; uniform float uA; out vec4 o;
+      void main(){ float f = 0.2 + 0.8 * smoothstep(-1.1, 1.0, vD); o = vec4(0.86, 0.93, 0.96, uA * f); }`;
+
+    const mk = (vsrc, fsrc) => {
+      const sh = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+      const p = gl.createProgram();
+      gl.attachShader(p, sh(gl.VERTEX_SHADER, vsrc)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fsrc));
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.warn(gl.getProgramInfoLog(p));
+      return p;
+    };
+    this.pPoint = mk(vs, fsPoint); this.pLine = mk(vs, fsLine);
+
+    const vbo = gl.createBuffer();
+    this.vbo = vbo;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bufferData(gl.ARRAY_BUFFER, g.pos, gl.STATIC_DRAW);
+    const setupVao = prog => {
+      const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      const loc = gl.getAttribLocation(prog, "aPos");
+      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      return vao;
+    };
+    this.vaoPoint = setupVao(this.pPoint);
+    this.vaoLine = setupVao(this.pLine);
+    this.ebo = gl.createBuffer();
+    gl.bindVertexArray(this.vaoLine);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ebo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.idx, gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0.0824, 0.3098, 0.4118, 1);
+    this.resize();
+    this.setState({ drawn: n });
+    this.t0 = performance.now();
+    this.loop();
+  }
+
+  resize() {
+    const cv = this.glCanvas, gl = this.gl; if (!cv || !gl) return;
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
+    gl.viewport(0, 0, cv.width, cv.height);
+  }
+
+  loop = () => {
+    this._raf = requestAnimationFrame(this.loop);
+    const cv = (this.gpuR || this.stage) ? this.gpuCanvas : this.glCanvas;
+    if (!cv || (!this.gpuR && !this.gl && !this.stage)) return;
+    if (document.hidden || cv.getBoundingClientRect().bottom < 0) return;
+    if (!this.gpuR && !this.stage && cv.width !== Math.round(cv.clientWidth * Math.min(devicePixelRatio || 1, 1.5))) this.resize();
+    const gl = this.gl;
+
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - (this._last || now)) / 1000);
+    this._last = now;
+    const speed = this.props.driftSpeed ?? 0.3;
+    const t = (now - this.t0) / 1000 * 0.055 * speed;
+    // Pointer parallax as a heavy spring-damper: the mass accelerates slowly,
+    // keeps moving after the cursor stops, and settles without snapping.
+    const par = this.props.parallax ?? 0.07;
+    const mass = this.props.mass ?? 1;
+    const k = 0.0016 / mass;      // weak spring — slow to get going
+    const damp = 1 - 0.028 * (1 / mass); // little friction — long coast
+    const tilting = this.state.motion === "on";
+    if (tilting) {
+      // device tilt is a direct 1:1 look-around — no spring, no smoothing
+      this.pmx = this.mx; this.pmy = this.my;
+      this.vx = 0; this.vy = 0;
+    } else {
+      this.vx = (this.vx || 0) + (this.mx - this.pmx) * k;
+      this.vy = (this.vy || 0) + (this.my - this.pmy) * k;
+      this.vx *= damp; this.vy *= damp;
+      this.pmx += this.vx; this.pmy += this.vy;
+    }
+    const look = tilting ? 4.5 : 1;
+    const yaw = t - this.pmx * par * 0.9 * look;
+    const ca = Math.cos(yaw), sa = Math.sin(yaw);
+    const tilt = 0.42 + Math.sin(t * 0.55) * 0.12 - this.pmy * par * 0.7 * look;
+
+    // dolly carries the same mass as the parallax
+    this.dv += (this.dollyTarget - this.dolly) * 0.0055 / mass;
+    this.dv *= 1 - 0.045 * (1 / mass);
+    this.dolly += this.dv;
+    const cb = Math.cos(tilt), sb = Math.sin(tilt);
+    // rotate about Y then tilt about X (column-major mat3)
+    const R = [ca, sb * sa, -cb * sa, 0, cb, sb, sa, -sb * ca, cb * ca];
+    const aspect = cv.width / cv.height;
+    const fix = [Math.min(1, 1 / aspect), Math.min(1, aspect)];
+    const scale = (this.props.zoom ?? 1.7) * 1.55 * this.dolly;
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+
+    // frame time, measured — an EMA of real rAF deltas, not a target
+    this.ms = this.ms ? this.ms * 0.9 + dt * 1000 * 0.1 : dt * 1000;
+    if (now - (this._reported || 0) > 400) { this._reported = now; this.forceUpdate(); }
+
+    if (this.stage) {
+      this.stage.resize(cv.clientWidth * dpr | 0, cv.clientHeight * dpr | 0);
+      this.stage.frame(new Float32Array(R), scale, 1.1 * dpr, false, 0.016);
+      return;
+    }
+    if (this.gpuR) {
+      this.gpuR.sim.on = false;
+      this.gpuR.frame(R, fix, scale, 1.1 * dpr);
+      return;
+    }
+
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(this.pLine); gl.bindVertexArray(this.vaoLine);
+    gl.uniformMatrix3fv(gl.getUniformLocation(this.pLine, "uRot"), false, R);
+    gl.uniform1f(gl.getUniformLocation(this.pLine, "uScale"), scale);
+    gl.uniform2fv(gl.getUniformLocation(this.pLine, "uFix"), fix);
+    gl.uniform1f(gl.getUniformLocation(this.pLine, "uA"), 0.035);
+    gl.uniform1f(gl.getUniformLocation(this.pLine, "uPt"), 1);
+    gl.drawElements(gl.LINES, this.graph.idx.length, gl.UNSIGNED_INT, 0);
+
+    gl.useProgram(this.pPoint); gl.bindVertexArray(this.vaoPoint);
+    gl.uniformMatrix3fv(gl.getUniformLocation(this.pPoint, "uRot"), false, R);
+    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uScale"), scale);
+    gl.uniform2fv(gl.getUniformLocation(this.pPoint, "uFix"), fix);
+    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uA"), 0.5);
+    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uPt"), 1.5 * dpr);
+    gl.drawArrays(gl.POINTS, 0, this.graph.n);
+    gl.bindVertexArray(null);
+  };
+
+  drawFallback() {
+    const cv = this.fbCanvas; if (!cv) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
+    const ctx = cv.getContext("2d");
+    const w = cv.width, h = cv.height;
+    ctx.fillStyle = "#154F69"; ctx.fillRect(0, 0, w, h);
+    const g = this.buildGraph(2600, 26);
+    const aspect = w / h, sc = 0.55 * Math.min(w, h) * 1.5;
+    const px = i => w / 2 + g.pos[i * 3] * sc / (aspect > 1 ? 1 : 1);
+    const py = i => h / 2 + g.pos[i * 3 + 1] * sc;
+    ctx.strokeStyle = "rgba(232,242,246,.09)"; ctx.lineWidth = dpr;
+    ctx.beginPath();
+    for (let k = 0; k < g.idx.length; k += 2) { ctx.moveTo(px(g.idx[k]), py(g.idx[k])); ctx.lineTo(px(g.idx[k + 1]), py(g.idx[k + 1])); }
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,.55)";
+    for (let i = 0; i < g.n; i++) { ctx.beginPath(); ctx.arc(px(i), py(i), 1.3 * dpr, 0, 6.2832); ctx.fill(); }
+    this.setState({ drawn: 2600 });
+  }
+
+  // Device tilt drives the same heavy spring as the mouse. iOS 13+ requires the
+  // request to happen inside a user gesture, so this is always tap-initiated.
+  enableMotion = async () => {
+    const DOE = window.DeviceOrientationEvent;
+    if (!DOE) { this.setState({ motion: "unavailable" }); return; }
+    try {
+      if (typeof DOE.requestPermission === "function") {
+        const res = await DOE.requestPermission();
+        if (res !== "granted") { this.setState({ motion: "denied" }); return; }
+      }
+    } catch (e) { this.setState({ motion: "denied" }); return; }
+    this._onTilt = e => {
+      if (e.gamma == null && e.beta == null) return;
+      // gamma is left/right and beta front/back *in device space*, so both swap
+      // and flip as the screen rotates — remap into screen space first.
+      this.mx = Math.max(-1, Math.min(1, (e.gamma || 0) / 38));
+      this.my = Math.max(-1, Math.min(1, ((e.beta || 0) - 42) / 34));
+    };
+    addEventListener("deviceorientation", this._onTilt, { passive: true });
+    this.setState({ motion: "on" });
+  };
+
+  renderFull = () => {
+    if (this.coarse) this.enableMotion();
+    if (this.state.mode === "full") return;
+    this.setState({ mode: "full" }, () => this.initRender());
+  };
+
+  submit = e => {
+    e.preventDefault();
+    const f = e.target;
+    const body = [`Company: ${f.company.value}`, `Email: ${f.email.value}`, "", f.message.value].join("\n");
+    location.href = `mailto:thomas@trask.technology?subject=${encodeURIComponent("Trask Technology enquiry")}&body=${encodeURIComponent(body)}`;
+  };
+
+  tab(active) {
+    return { font: "inherit", fontSize: "11px", letterSpacing: ".08em", textTransform: "uppercase", padding: "6px 10px", cursor: "pointer", border: 0,
+      background: active ? "#fff" : "transparent", color: active ? "#154F69" : "rgba(255,255,255,.65)" };
+  }
+
+  renderVals() {
+    const split = this.state.variant === "b";
+    const full = this.state.mode === "full";
+    const n = this.state.drawn;
+    return {
+      glRef: el => { this.glCanvas = el; },
+      gpuRef: el => { this.gpuCanvas = el; },
+      fbRef: el => { this.fbCanvas = el; },
+      pickA: () => this.setState({ variant: "a" }),
+      pickB: () => this.setState({ variant: "b" }),
+      tabAStyle: this.tab(!split),
+      tabBStyle: this.tab(split),
+      renderFull: this.renderFull,
+      nodeSlider: this.state.nodes,
+      densitySlider: this.state.density,
+      onNodes: e => { this.setState({ nodes: +e.target.value }, this.rebuild); },
+      onDensity: e => { this.setState({ density: +e.target.value }, this.rebuild); },
+      showRenderButton: !full,
+      submit: this.submit,
+      showStatus: !this.state.narrow,
+      showSliders: !this.state.tiny,
+      enableMotion: this.enableMotion,
+      showMotionButton: full && this.coarse && this.state.motion !== "on" && this.state.motion !== "unavailable",
+      graphEngine: `layout: ${this.engine || "js"} · sim: ${this.stage || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"} · draw: ${this.api || "webgl2"}`,
+      graphStatus: this.state.building
+        ? "building graph…"
+        : n
+          ? `${n.toLocaleString("en-US")} nodes · ${(this.graph ? this.graph.idx.length / 2 : 0).toLocaleString("en-US")} edges · ${this.ms ? Math.round(1000 / this.ms) : 0} fps`
+          : "preparing graph…",
+      canvasWrapStyle: (() => {
+        const mask = split
+          ? "linear-gradient(90deg, transparent 0%, rgba(0,0,0,.05) 16%, rgba(0,0,0,.22) 30%, rgba(0,0,0,.6) 46%, #000 66%)"
+          : "radial-gradient(120% 110% at 50% 50%, rgba(0,0,0,.30) 0%, rgba(0,0,0,.55) 34%, #000 72%)";
+        return {
+          position: "absolute", top: 0, bottom: 0, right: 0, left: 0,
+          maskImage: mask, WebkitMaskImage: mask
+        };
+      })(),
+      glCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api !== "webgpu" ? "block" : "none" },
+      gpuCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "webgpu" ? "block" : "none" },
+      fbCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full ? "none" : "block" },
+      heroTextWrapStyle: {
+        position: "relative", zIndex: 10, width: "100%", padding: split ? "clamp(120px, 18vw, 160px) clamp(22px, 5vw, 48px) 96px" : "170px 48px 110px",
+        display: "flex", justifyContent: split ? "flex-start" : "center", textAlign: split ? "left" : "center"
+      },
+      heroTextStyle: {
+        maxWidth: split ? "480px" : "880px", marginLeft: split ? "clamp(0px, 6vw, 120px)" : 0,
+        display: "flex", flexDirection: "column", alignItems: split ? "flex-start" : "center",
+        textAlign: split ? "left" : "center"
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

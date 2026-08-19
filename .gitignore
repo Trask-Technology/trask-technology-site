@@ -1,0 +1,14 @@
+# Rust / wasm build output
+web/pkg/
+rust/target/
+**/*.rs.bk
+Cargo.lock
+
+# bundled single-file build of the site
+*-standalone.html
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

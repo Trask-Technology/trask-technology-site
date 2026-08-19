@@ -1,4 +1,4 @@
-# trask_graph — build the hero graph wasm bundles.
+# trask_graph — build the hero graph wasm bundle.
 #
 # Run from this directory (web/rust). Output lands in web/web/pkg/, which is
 # where "Trask Technology Site.dc.html" imports ./pkg/ from.
@@ -15,21 +15,13 @@ PORT  ?= 8000
 CARGO    := env -u RUSTFLAGS cargo
 WASMPACK := env -u RUSTFLAGS wasm-pack
 
-.PHONY: all wasm wasm-gl wasm-lite check clean serve tools help
+.PHONY: all wasm check clean serve tools help
 
 all: wasm
 
-## wasm       Both renderers: Stage (wgpu/WebGPU) + GlStage (WebGL2).
+## wasm       Build the bundle into ../web/pkg.
 wasm:
-	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --features webgl
-
-## wasm-gl    WebGL2 only: GlStage via glow, no wgpu. For visitors with no WebGPU.
-wasm-gl:
-	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --no-default-features --features webgl
-
-## wasm-lite  Generation only: Graph alone, no wgpu, no Stage (~27 KB).
-wasm-lite:
-	$(WASMPACK) build --target web --release --out-dir $(PKG) -- --no-default-features
+	$(WASMPACK) build --target web --release --out-dir $(PKG)
 
 ## check      Type-check against wasm32 without emitting a bundle.
 check:

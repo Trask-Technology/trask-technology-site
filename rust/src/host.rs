@@ -19,7 +19,7 @@ pub trait Scene {
     fn point_scale(&self) -> f32;
     fn resize(&mut self, width: u32, height: u32);
     fn set_graph(&mut self, graph: &Graph);
-    fn draw(&mut self, rot: [f32; 9], scale: f32, point_px: f32, simulate: bool);
+    fn draw(&mut self, rot: [f32; 9], scale: f32, point_px: f32);
 }
 
 /// WebGPU's default maxTextureDimension2D. A 5K window at dpr 1.5 (7680) comes
@@ -43,7 +43,6 @@ pub struct Host<S: Scene> {
     pub clusters: usize,
     pub density: f32,
     pub seed: u32,
-    pub simulate: bool,
     pub running: bool,
 }
 
@@ -58,7 +57,6 @@ impl<S: Scene> Host<S> {
             clusters,
             density,
             seed,
-            simulate: false,
             running: true,
         }
     }
@@ -97,7 +95,7 @@ impl<S: Scene> Host<S> {
         }
 
         let v = self.camera.step(now);
-        self.scene.draw(v.rot, v.scale, self.scene.point_scale() * dpr, self.simulate);
+        self.scene.draw(v.rot, v.scale, self.scene.point_scale() * dpr);
     }
 }
 
@@ -220,7 +218,6 @@ impl<S: Scene + 'static> Handle<S> {
     }
 
     pub fn set_tilting(&self, on: bool) { self.inner.borrow_mut().camera.tilting = on; }
-    pub fn set_simulate(&self, on: bool) { self.inner.borrow_mut().simulate = on; }
     pub fn set_pointer(&self, x: f32, y: f32) {
         let mut s = self.inner.borrow_mut();
         s.camera.mx = x;

@@ -16,31 +16,26 @@
   a:hover { color: #0e3849; }
   ::selection { background: rgba(21,79,105,.2); }
   input, textarea { font-family: Lato, Helvetica, Arial, sans-serif; }
+
+  /* Label-beside-body layout. Below 880px the label stacks above the prose it
+     introduces ("What we do" over its paragraph) instead of being squeezed into
+     an unreadable column. */
+  .row2 { display: grid; grid-template-columns: 1fr 1.35fr; gap: 88px; align-items: start; }
+  @media (max-width: 880px) { .row2 { grid-template-columns: 1fr; gap: 26px; } }
+
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  @media (max-width: 640px) { .cols3 { grid-template-columns: 1fr; gap: 24px; } }
 </style>
 </helmet>
 <template id="__bundler_thumbnail"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#154F69"></rect><circle cx="38" cy="42" r="4" fill="#fff"></circle><circle cx="62" cy="34" r="3" fill="#fff"></circle><circle cx="58" cy="62" r="5" fill="#fff"></circle><circle cx="34" cy="64" r="3" fill="#fff"></circle><path d="M38 42 L62 34 M38 42 L58 62 M58 62 L34 64 M34 64 L38 42 M62 34 L58 62" stroke="#fff" stroke-opacity=".55" stroke-width="1"></path></svg></template>
 <div style="background: #fff">
   <header style="position: fixed; top: 0; left: 0; right: 0; z-index: 30; display: flex; align-items: center; justify-content: flex-end; padding: 26px 48px; mix-blend-mode: normal">
-    <div style="display: flex; align-items: center; gap: 22px; flex-wrap: nowrap; justify-content: flex-end; min-width: 0">
-      <sc-if value="{{ showStatus }}" hint-placeholder-val="{{ true }}">
-        <div title="{{ graphEngine }}" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.75); white-space: nowrap; text-align: right; min-width: 210px">{{ graphStatus }}</div>
-      </sc-if>
-      <sc-if value="{{ showSliders }}" hint-placeholder-val="{{ true }}">
-      <label style="display: flex; align-items: center; gap: 8px; flex: none">
-        <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Nodes</span>
-        <input type="range" min="10000" max="200000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
-      </label>
-      <label style="display: flex; align-items: center; gap: 8px; flex: none">
-        <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Edges</span>
-        <input type="range" min="0.2" max="3" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
-      </label>
-      </sc-if>
-      <a href="#contact" style="font-weight: 400; font-size: 14px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.72); border-bottom: 1px solid rgba(255,255,255,.3); padding-bottom: 2px; white-space: nowrap; flex: none">Contact</a>
-    </div>
+    <a href="#contact" style="font-weight: 400; font-size: 14px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.72); border-bottom: 1px solid rgba(255,255,255,.3); padding-bottom: 2px; white-space: nowrap; flex: none">Contact</a>
   </header>
 
   <section style="position: relative; min-height: 100vh; background: #154F69; overflow: hidden; display: flex; align-items: center">
     <div style="{{ canvasWrapStyle }}">
+      <canvas ref="{{ wgpuRef }}" style="{{ wgpuCanvasStyle }}"></canvas>
       <canvas ref="{{ gpuRef }}" style="{{ gpuCanvasStyle }}"></canvas>
       <canvas ref="{{ glRef }}" style="{{ glCanvasStyle }}"></canvas>
       <canvas ref="{{ fbRef }}" style="{{ fbCanvasStyle }}"></canvas>
@@ -50,6 +45,19 @@
       <div style="{{ heroTextStyle }}">
         <h1 style="margin: 0; font-weight: 700; font-size: clamp(30px, 9vw, 58px); line-height: 1.05; letter-spacing: -.005em; color: #fff; white-space: nowrap">Trask Technology</h1>
         <p style="margin: 14px 0 0; font-weight: 300; font-size: clamp(15px, 3.7vw, 24px); line-height: 1.3; letter-spacing: .01em; color: rgba(255,255,255,.74); white-space: nowrap">Graph intelligence</p>
+        <div style="{{ heroMetaRowStyle }}">
+          <div title="{{ graphEngine }}" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.75);">{{ graphStatus }}</div>
+        </div>
+        <div style="{{ heroSliderRowStyle }}">
+          <label style="display: flex; align-items: center; gap: 8px; flex: none">
+            <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Nodes</span>
+            <input type="range" min="10000" max="200000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; flex: none">
+            <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45)">Edges</span>
+            <input type="range" min="0.2" max="3" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 72px; height: 2px; accent-color: #fff; cursor: pointer" />
+          </label>
+        </div>
         <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px">
           <sc-if value="{{ showRenderButton }}" hint-placeholder-val="{{ false }}">
             <button onClick="{{ renderFull }}" style="font-weight: 400; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.8); background: transparent; border: 1px solid rgba(255,255,255,.35); padding: 14px 22px; cursor: pointer">Render the full graph</button>
@@ -63,13 +71,13 @@
   </section>
 
   <section style="background: #fff; padding: 132px 48px 140px">
-    <div style="max-width: 1040px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.35fr; gap: 88px; align-items: start">
+    <div class="row2" style="max-width: 1040px; margin: 0 auto">
       <div style="font-weight: 300; font-size: 13px; letter-spacing: .34em; text-transform: uppercase; color: rgba(21,79,105,.65); padding-top: 10px">What we do</div>
       <div style="display: flex; flex-direction: column; gap: 30px">
         <p style="margin: 0; font-weight: 300; font-size: 26px; line-height: 1.5; color: #1d2b30; text-wrap: pretty">General-purpose tools stop being useful exactly where the interesting data begins. We build the algorithms that carry on past that line.</p>
         <p style="margin: 0; font-weight: 400; font-size: 17px; line-height: 1.75; color: #46545a; text-wrap: pretty">Trask Technology builds custom components for low-latency storage, retrieval and analysis of complex data at scale. The work is shaped around how the machine actually behaves — memory layout, cache behaviour, the real cost of a random access — and written in Rust.</p>
         <p style="margin: 0; font-weight: 400; font-size: 17px; line-height: 1.75; color: #46545a; text-wrap: pretty">Our current research is in online advertising, where the data is behavioural, the graphs are large and the answer is due in milliseconds. Little of what we learn there is specific to it: the same methods hold wherever structure and scale matter more than convenience.</p>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 14px; padding-top: 34px; border-top: 1px solid #e6eaeb">
+        <div class="cols3" style="margin-top: 14px; padding-top: 34px; border-top: 1px solid #e6eaeb">
           <div style="display: flex; flex-direction: column; gap: 9px">
             <div style="font-weight: 700; font-size: 15px; color: #154F69">Algorithms</div>
             <div style="font-weight: 400; font-size: 14px; line-height: 1.6; color: #6a767b">Data structures designed for the problem rather than adapted to it.</div>
@@ -89,7 +97,7 @@
 
   <section id="contact" style="position: relative; background: #154F69; padding: 124px 48px 96px; overflow: hidden">
     <img src="exports/trask-watermark-titlebox-white.png" alt="" style="position: absolute; right: -30px; bottom: -30px; top: auto; width: 480px; height: auto; opacity: .5; pointer-events: none; mask-image: linear-gradient(90deg, transparent 0%, #000 62%); -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 62%)" />
-    <div style="position: relative; max-width: 1040px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1.35fr; gap: 88px; align-items: start">
+    <div class="row2" style="position: relative; max-width: 1040px; margin: 0 auto">
       <div style="display: flex; flex-direction: column; gap: 22px">
         <div style="font-weight: 300; font-size: 13px; letter-spacing: .34em; text-transform: uppercase; color: rgba(255,255,255,.6)">Contact</div>
         <p style="margin: 0; font-weight: 300; font-size: 24px; line-height: 1.5; color: #fff; max-width: 320px; text-wrap: pretty">Tell us the shape of your graph. We will tell you what it takes.</p>
@@ -128,7 +136,9 @@ class Component extends DCLogic {
   state = { variant: "b", mode: "pending", drawn: 0, nodes: 50000, density: 1, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
 
   componentDidMount() {
-    this.glCanvas = null; this.fbCanvas = null;
+    // Do NOT null glCanvas/fbCanvas here: the ref callbacks in renderVals have
+    // already run by this point, so clearing them strands every fallback path
+    // (initGL and drawFallback both bail on a null canvas and never set `drawn`).
     this.coarse = matchMedia("(pointer: coarse)").matches;
     // Phones handle this fine — only bail on no WebGL2, very few cores, or reduced motion.
     const weak = !this.probeGL() ||
@@ -166,6 +176,7 @@ class Component extends DCLogic {
     // catch layout-driven size changes the window events miss
     this._ro = new ResizeObserver(() => this._onResize());
     if (this.gpuCanvas) this._ro.observe(this.gpuCanvas);
+    if (this.wgpuCanvas) this._ro.observe(this.wgpuCanvas);
     if (this.glCanvas) this._ro.observe(this.glCanvas);
   }
 
@@ -302,12 +313,22 @@ class Component extends DCLogic {
   // Rust/wgpu owning the whole pipeline is the preferred path when built.
   async tryRustStage(n) {
     try {
+      // Bail before touching the canvas when WebGPU is absent: creating the
+      // surface claims the element's context, and gpu-renderer.js could not then
+      // get a clean one for its own fallback path.
+      if (!navigator.gpu) return this.noStage("navigator.gpu is undefined — browser has no WebGPU");
       const mod = await import("./pkg/trask_graph.js");
-      if (!mod.Stage || !this.gpuCanvas) return false;
+      if (!mod.Stage) return this.noStage("pkg has no Stage export — built with --no-default-features");
+      if (!this.wgpuCanvas) return this.noStage("wgpuCanvas ref is not populated yet");
       await mod.default();
-      const cv = this.gpuCanvas;
+      const cv = this.wgpuCanvas;
       const dpr = Math.min(devicePixelRatio || 1, 1.5);
-      cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
+      // The canvas is still display:none at this point (api is unset until the
+      // next render), so clientWidth is 0 — measure the laid-out wrapper instead.
+      const box = cv.parentElement;
+      const cw = cv.clientWidth || (box && box.clientWidth) || innerWidth;
+      const ch = cv.clientHeight || (box && box.clientHeight) || innerHeight;
+      cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
       this.stage = await mod.Stage.create(cv, n, 34, this.state.density, 1337);
       this.engine = "rust/wasm"; this.api = "rust/wgpu";
       this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
@@ -315,7 +336,15 @@ class Component extends DCLogic {
       this.t0 = performance.now();
       this.loop();
       return true;
-    } catch (e) { this.stage = null; return false; }
+    } catch (e) { this.stage = null; return this.noStage(e); }
+  }
+
+  // Every rust/wgpu bail-out routes through here: the fallbacks are silent
+  // otherwise, and the status line only reports which path won, not why.
+  noStage(why) {
+    this.stageWhy = String((why && why.message) || why);
+    console.warn("[hero] rust/wgpu unavailable, falling back:", why);
+    return false;
   }
 
   async initRender() {
@@ -327,7 +356,11 @@ class Component extends DCLogic {
     try {
       const mod = await import("./gpu-renderer.js");
       this.gpuR = await mod.createGPURenderer(this.gpuCanvas, g);
-    } catch (e) { this.gpuR = null; }
+    } catch (e) {
+      this.gpuR = null;
+      this.gpuWhy = String((e && e.message) || e);
+      console.warn("[hero] webgpu renderer unavailable, falling back:", e);
+    }
     if (this.gpuR) {
       this.api = "webgpu";
       this.setState({ drawn: g.n });
@@ -413,7 +446,7 @@ class Component extends DCLogic {
 
   loop = () => {
     this._raf = requestAnimationFrame(this.loop);
-    const cv = (this.gpuR || this.stage) ? this.gpuCanvas : this.glCanvas;
+    const cv = this.stage ? this.wgpuCanvas : this.gpuR ? this.gpuCanvas : this.glCanvas;
     if (!cv || (!this.gpuR && !this.gl && !this.stage)) return;
     if (document.hidden || cv.getBoundingClientRect().bottom < 0) return;
     if (!this.gpuR && !this.stage && cv.width !== Math.round(cv.clientWidth * Math.min(devicePixelRatio || 1, 1.5))) this.resize();
@@ -557,9 +590,16 @@ class Component extends DCLogic {
     const split = this.state.variant === "b";
     const full = this.state.mode === "full";
     const n = this.state.drawn;
+    // Only the full graph goes through this.api; the preview is drawn on the 2D
+    // fallback canvas, which no api string covers.
+    const renderer = full ? (this.api || "webgl2") : "canvas2d";
+    // Both WebGPU paths draw into gpuCanvas — "rust/wgpu" counts as well as
+    // "webgpu", or Rust renders into a hidden canvas behind an empty GL one.
+    const gpuActive = this.api === "webgpu" || this.api === "rust/wgpu";
     return {
       glRef: el => { this.glCanvas = el; },
       gpuRef: el => { this.gpuCanvas = el; },
+      wgpuRef: el => { this.wgpuCanvas = el; },
       fbRef: el => { this.fbCanvas = el; },
       pickA: () => this.setState({ variant: "a" }),
       pickB: () => this.setState({ variant: "b" }),
@@ -572,15 +612,23 @@ class Component extends DCLogic {
       onDensity: e => { this.setState({ density: +e.target.value }, this.rebuild); },
       showRenderButton: !full,
       submit: this.submit,
-      showStatus: !this.state.narrow,
-      showSliders: !this.state.tiny,
       enableMotion: this.enableMotion,
       showMotionButton: full && this.coarse && this.state.motion !== "on" && this.state.motion !== "unavailable",
-      graphEngine: `layout: ${this.engine || "js"} · sim: ${this.stage || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"} · draw: ${this.api || "webgl2"}`,
+      graphEngine: [
+        `layout: ${this.engine || "js"}`,
+        `sim: ${this.stage || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"}`,
+        `draw: ${renderer}`,
+        `webgpu in browser: ${navigator.gpu ? "yes" : "no"}`,
+        // Chrome only exposes navigator.gpu in a secure context: https, or
+        // localhost/127.0.0.1 exactly. A LAN or WSL IP over http hides WebGPU.
+        `secure context: ${isSecureContext ? "yes" : `no (${location.origin})`}`,
+        this.stageWhy ? `no rust/wgpu: ${this.stageWhy}` : null,
+        this.gpuWhy ? `no webgpu: ${this.gpuWhy}` : null,
+      ].filter(Boolean).join(" · "),
       graphStatus: this.state.building
         ? "building graph…"
         : n
-          ? `${n.toLocaleString("en-US")} nodes · ${(this.graph ? this.graph.idx.length / 2 : 0).toLocaleString("en-US")} edges · ${this.ms ? Math.round(1000 / this.ms) : 0} fps`
+          ? `${n.toLocaleString("en-US")} nodes · ${(this.graph ? this.graph.idx.length / 2 : 0).toLocaleString("en-US")} edges · ${renderer}`
           : "preparing graph…",
       canvasWrapStyle: (() => {
         const mask = split
@@ -591,12 +639,26 @@ class Component extends DCLogic {
           maskImage: mask, WebkitMaskImage: mask
         };
       })(),
-      glCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api !== "webgpu" ? "block" : "none" },
+      glCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && !gpuActive ? "block" : "none" },
       gpuCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "webgpu" ? "block" : "none" },
+      wgpuCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "rust/wgpu" ? "block" : "none" },
       fbCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full ? "none" : "block" },
       heroTextWrapStyle: {
-        position: "relative", zIndex: 10, width: "100%", padding: split ? "clamp(120px, 18vw, 160px) clamp(22px, 5vw, 48px) 96px" : "170px 48px 110px",
+        position: "relative", zIndex: 10, width: "100%", padding: split ? "clamp(96px, 13vw, 150px) clamp(22px, 5vw, 48px) 96px" : "140px 48px 110px",
         display: "flex", justifyContent: split ? "flex-start" : "center", textAlign: split ? "left" : "center"
+      },
+      // The controls sit inside the hero text column and hug its right edge in the
+      // split layout, so they read as one block with the heading rather than as a
+      // toolbar. They wrap instead of overflowing once the column gets narrow.
+      heroMetaRowStyle: {
+        alignSelf: "stretch", display: "flex", alignItems: "center", gap: "18px",
+        flexWrap: "wrap", marginTop: "22px",
+        justifyContent: split ? "flex-end" : "center"
+      },
+      heroSliderRowStyle: {
+        alignSelf: "stretch", display: "flex", alignItems: "center", gap: "18px",
+        flexWrap: "wrap", marginTop: "12px",
+        justifyContent: split ? "flex-end" : "center"
       },
       heroTextStyle: {
         maxWidth: split ? "480px" : "880px", marginLeft: split ? "clamp(0px, 6vw, 120px)" : 0,

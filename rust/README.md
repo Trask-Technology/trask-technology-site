@@ -18,35 +18,53 @@ back to the CPU between frames.
 ```sh
 cargo install wasm-pack                     # once
 cd rust
-wasm-pack build --target web --release --out-dir ../pkg
+wasm-pack build --target web --release --out-dir ../web/pkg
 ```
 
-Writes `pkg/trask_graph.js` + `pkg/trask_graph_bg.wasm` at the project root, where
-`Trask Technology Site.dc.html` looks for them. The page then reports
-`layout: rust/wasm` (and `draw: rust/wgpu` once `Stage` is in use) in the status
-tooltip under the hero; without the build it falls back to the JS generator.
+Writes `trask_graph.js` + `trask_graph_bg.wasm` into `web/web/pkg/`, beside
+`Trask Technology Site.dc.html`, which imports them from `./pkg/`. The page then
+reports `layout: rust/wasm` and `draw: rust/wgpu` in the status tooltip under the
+hero; without the build it falls back to the JS generator.
 
-Generation-only bundle (much smaller, no wgpu):
+Generation-only bundle — no wgpu, no `Stage`, ~27 KB instead of ~200 KB:
 
 ```sh
-wasm-pack build --target web --release --no-default-features --out-dir ../pkg
+wasm-pack build --target web --release --no-default-features --out-dir ../web/pkg
 ```
 
-SIMD (128-bit) for the generation pass:
+Note that this bundle has no `Stage` export, so the page will report `webgpu` or
+`webgl2` rather than `rust/wgpu`. That is the expected result, not a failure.
+
+### A global `RUSTFLAGS` will break this
+
+`RUSTFLAGS` applies to every target, `wasm32-unknown-unknown` included. A host
+tuning flag such as `-C target-cpu=native` leaks into the wasm build, and
+wasm-bindgen then fails with `failed to find intrinsics to enable clone_ref`.
+Clear it for the build:
 
 ```sh
-RUSTFLAGS="-C target-feature=+simd128" wasm-pack build --target web --release --out-dir ../pkg
+env -u RUSTFLAGS wasm-pack build --target web --release --out-dir ../web/pkg
 ```
 
-## Native build
+Better, keep host tuning out of the environment entirely and scope it to the host
+target in `~/.cargo/config.toml`, where it cannot reach a wasm build:
 
-The same crate runs outside the browser — `wgpu` selects Vulkan, Metal or DX12,
-and the WGSL is unchanged. Useful for profiling the layout at sizes a tab won't
-tolerate:
-
-```sh
-cargo run --release --example bench     # add your own example/bin
+```toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
 ```
+
+## WebGPU only
+
+The `render` feature builds wgpu with the `webgpu` backend alone. The layout pass
+is a compute shader and WebGL2 has none, so a GL adapter could only fail later, at
+pipeline creation. With WebGPU absent the adapter request returns nothing,
+`Stage::create` rejects cleanly, and the page falls back to its JS renderers.
+
+The browser exposes `navigator.gpu` only in a **secure context**: `https://`, or
+`http://localhost` / `http://127.0.0.1` exactly. Serving the page on a LAN or WSL
+IP over plain http hides WebGPU from the page altogether, and the hero drops to
+WebGL2 with nothing obviously wrong. See the root README for how to serve it.
 
 ## JS usage
 
@@ -66,11 +84,25 @@ stage.frame(rot3x3, scale, pointPx, true, 0.016);
 Re-create any `Float32Array`/`Uint32Array` views after a call that can grow wasm
 memory — the backing buffer may have been reallocated.
 
+`Stage::create` takes ownership of the canvas's WebGPU context, and a canvas can
+never hand its context back. Give `Stage` its own canvas element rather than one
+another renderer may need to fall back onto.
+
+## Native build
+
+Not currently possible. `Cargo.toml` enables no native wgpu backend, and
+`Stage::create` takes a `web_sys::HtmlCanvasElement`. Running the layout outside
+the browser — worth doing to profile at sizes a tab will not tolerate — needs a
+`vulkan`/`metal`/`dx12` feature and a `cfg`-split surface target first. There is
+no `examples/` directory yet.
+
 ## Not yet done
 
-* `Stage` is written but has never been compiled here — expect small API drift
-  against your installed `wgpu` version (`SurfaceTargetUnsafe::from_window` in
-  particular moves between releases).
+* `simd` is declared in `Cargo.toml` but nothing is behind `cfg(feature = "simd")`,
+  so enabling it — or building with `-C target-feature=+simd128` — changes nothing.
 * Barnes-Hut or a grid hash would replace centroid repulsion for a layout that is
   correct rather than merely plausible.
-* Timestamp queries for real GPU-side frame timing instead of rAF deltas.
+* Timestamp queries for real GPU-side frame timing.
+* No tests, and `Stage` has had very little real-world exposure. The shaders
+  validate under naga and the pipeline builds, but treat wgpu validation errors as
+  expected rather than surprising.

@@ -51,7 +51,10 @@ impl Graph {
         }
 
         let mut pos = vec![0.0f32; nodes * 4];
-        let mut members: Vec<Vec<u32>> = vec![Vec::with_capacity(nodes / clusters + 8); clusters];
+        // `vec![Vec::with_capacity(..); n]` clones an empty Vec n times and every
+        // clone lands at capacity 0, so build the reservations one by one.
+        let mut members: Vec<Vec<u32>> =
+            (0..clusters).map(|_| Vec::with_capacity(nodes / clusters + 8)).collect();
         for i in 0..nodes {
             let c = (rng.next_f32() * clusters as f32) as usize % clusters;
             let sd = 0.055 + 0.07 * rng.next_f32();

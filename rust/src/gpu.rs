@@ -1,6 +1,9 @@
 //! wgpu renderer: owns the device, buffers, compute pass and render pass.
-//! The same code compiles native (wgpu picks Vulkan/Metal/DX12) and to wasm
-//! (WebGPU), so the browser hero and a desktop tool share one pipeline.
+//! WebGPU only — the layout pass is a compute shader, which WebGL2 cannot run,
+//! so a browser without WebGPU gets no adapter here and the page falls back to
+//! the JS path. Enabling a native backend in Cargo.toml would compile the same
+//! pipeline for Vulkan/Metal/DX12, but `Stage` would still need a non-canvas
+//! surface target.
 
 use crate::graph::Graph;
 use bytemuck::{Pod, Zeroable};
@@ -8,6 +11,11 @@ use std::borrow::Cow;
 use wgpu::util::DeviceExt;
 
 const WG: u32 = 64;
+
+/// Indices into the per-pass draw uniform/bind-group arrays. Edges draw first
+/// (they carry the clear), nodes draw over them.
+const DRAW_EDGES: usize = 0;
+const DRAW_NODES: usize = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -43,10 +51,10 @@ pub struct Renderer {
     edge_pipeline: wgpu::RenderPipeline,
     sim_pipeline: wgpu::ComputePipeline,
 
-    draw_bind: wgpu::BindGroup,
+    draw_bind: [wgpu::BindGroup; 2],
     sim_bind: wgpu::BindGroup,
 
-    draw_uniform: wgpu::Buffer,
+    draw_uniform: [wgpu::Buffer; 2],
     sim_uniform: wgpu::Buffer,
     quad: wgpu::Buffer,
     pos: wgpu::Buffer,
@@ -60,14 +68,13 @@ pub struct Renderer {
 
 impl Renderer {
     pub async fn new(
-        target: wgpu::SurfaceTargetUnsafe,
+        target: wgpu::SurfaceTarget<'static>,
         width: u32,
         height: u32,
         graph: &Graph,
     ) -> Result<Renderer, String> {
         let instance = wgpu::Instance::default();
-        // SAFETY: the canvas outlives the renderer — the JS wrapper holds both.
-        let surface = unsafe { instance.create_surface_unsafe(target) }.map_err(|e| e.to_string())?;
+        let surface = instance.create_surface(target).map_err(|e| e.to_string())?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -78,11 +85,9 @@ impl Renderer {
             .await
             .ok_or("no adapter")?;
 
-        let limits = wgpu::Limits {
-            max_storage_buffer_binding_size: adapter.limits().max_storage_buffer_binding_size,
-            max_buffer_size: adapter.limits().max_buffer_size,
-            ..wgpu::Limits::downlevel_webgl2_defaults()
-        };
+        // The sim pass needs compute and six storage bindings; the WebGL2
+        // downlevel profile zeroes both, so ask for what the adapter actually has.
+        let limits = adapter.limits();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -97,7 +102,14 @@ impl Renderer {
             .map_err(|e| e.to_string())?;
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats[0];
+        // Clear/blend colours below are authored in sRGB byte space, so pick a
+        // non-sRGB target and skip the automatic linear conversion.
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -162,11 +174,16 @@ impl Renderer {
             contents: bytemuck::cast_slice(&quad),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let draw_uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("draw_u"),
-            size: std::mem::size_of::<DrawUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        // One uniform buffer per draw pass. `write_buffer` is staged to the start
+        // of the next submission, so a single buffer written twice would hand
+        // both passes whichever value was written last.
+        let draw_uniform = [DRAW_EDGES, DRAW_NODES].map(|i| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(if i == DRAW_EDGES { "draw_u_edges" } else { "draw_u_nodes" }),
+                size: std::mem::size_of::<DrawUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
         let sim_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sim_u"),
@@ -190,9 +207,30 @@ impl Renderer {
             write_mask: wgpu::ColorWrites::ALL,
         })];
 
+        // Explicit, shared layout: both draw pipelines bind the same uniform, and
+        // one bind group has to be valid against either pipeline.
+        let draw_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("draw_bgl"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let draw_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("draw_layout"),
+            bind_group_layouts: &[&draw_bgl],
+            push_constant_ranges: &[],
+        });
+
         let node_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("nodes"),
-            layout: None,
+            layout: Some(&draw_layout),
             vertex: wgpu::VertexState {
                 module: &draw_shader,
                 entry_point: "vs_node",
@@ -225,7 +263,7 @@ impl Renderer {
 
         let edge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("edges"),
-            layout: None,
+            layout: Some(&draw_layout),
             vertex: wgpu::VertexState {
                 module: &draw_shader,
                 entry_point: "vs_edge",
@@ -261,13 +299,15 @@ impl Renderer {
             cache: None,
         });
 
-        let draw_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("draw_bind"),
-            layout: &node_pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: draw_uniform.as_entire_binding(),
-            }],
+        let draw_bind = [DRAW_EDGES, DRAW_NODES].map(|i| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("draw_bind"),
+                layout: &draw_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: draw_uniform[i].as_entire_binding(),
+                }],
+            })
         });
 
         let sim_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -367,12 +407,12 @@ impl Renderer {
         }
 
         // edges then nodes, each with its own alpha
-        for (pipeline, alpha, is_nodes) in [
-            (&self.edge_pipeline, 0.035f32, false),
-            (&self.node_pipeline, 0.5f32, true),
+        for (slot, pipeline, alpha, is_nodes) in [
+            (DRAW_EDGES, &self.edge_pipeline, 0.035f32, false),
+            (DRAW_NODES, &self.node_pipeline, 0.5f32, true),
         ] {
             self.queue.write_buffer(
-                &self.draw_uniform,
+                &self.draw_uniform[slot],
                 0,
                 bytemuck::bytes_of(&DrawUniform {
                     rot: rot4,
@@ -402,7 +442,7 @@ impl Renderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &self.draw_bind, &[]);
+            pass.set_bind_group(0, &self.draw_bind[slot], &[]);
             if is_nodes {
                 pass.set_vertex_buffer(0, self.quad.slice(..));
                 pass.set_vertex_buffer(1, self.pos.slice(..));

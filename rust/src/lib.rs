@@ -63,8 +63,7 @@ impl Stage {
     ) -> Result<Stage, JsValue> {
         let g = G::generate(nodes, clusters, density, seed);
         let (w, h) = (canvas.width().max(1), canvas.height().max(1));
-        let target = wgpu::SurfaceTargetUnsafe::from_window(&canvas)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let target = wgpu::SurfaceTarget::Canvas(canvas);
         let renderer = gpu::Renderer::new(target, w, h, &g)
             .await
             .map_err(|e| JsValue::from_str(&e))?;

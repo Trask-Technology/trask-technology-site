@@ -6,9 +6,14 @@ browser supports it and WebGL2 otherwise. Private repo.
 
 ```
 web/     the page: one self-contained design component + the WebGPU renderer
+  brand/   the one watermark the page loads, copied from ../brand
+  pkg/     wasm build output (generated, gitignored)
 rust/    graph generation, GPU force layout and a wgpu renderer, compiled to wasm
 brand/   watermark and lockup PNGs (transparent, white and #154F69)
 ```
+
+`web/` is the deploy unit: everything the page loads at runtime lives under it,
+so publishing is a copy of that one directory.
 
 ## Running the page
 
@@ -43,6 +48,11 @@ Two entry points: `Graph` generates the layout and CSR adjacency for JS to draw;
 
 Navy `#154F69`, Lato. The node-web watermark in `brand/` is generated from the
 same algorithm as the hero, exported at 2×–4× with transparency.
+
+`brand/` is the source of truth and holds every variant. Only the one asset the
+page actually renders — `trask-watermark-titlebox-white.png`, behind the contact
+form — is copied to `web/brand/`, because nothing outside `web/` is served. Swap
+the watermark and you need to copy it across again.
 
 ## State of things
 

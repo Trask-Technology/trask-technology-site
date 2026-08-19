@@ -98,7 +98,7 @@ impl Renderer {
             let vbo = gl.create_buffer()?;
             let ebo = gl.create_buffer()?;
 
-            let mut mk = |fsrc: &str, with_index: bool| -> Result<Prog, String> {
+            let mk = |fsrc: &str, with_index: bool| -> Result<Prog, String> {
                 let program = compile(&gl, VS, fsrc)?;
                 let vao = gl.create_vertex_array()?;
                 gl.bind_vertex_array(Some(vao));

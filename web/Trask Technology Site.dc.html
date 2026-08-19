@@ -59,11 +59,11 @@
         <div style="{{ heroSliderRowStyle }}">
           <label style="display: flex; align-items: center; gap: 8px; flex: none">
             <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); text-shadow: 0 1px 3px rgba(9,38,52,.85)">Nodes</span>
-            <input type="range" min="10000" max="200000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 96px; accent-color: #fff" />
+            <input type="range" min="100000" max="500000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 96px; accent-color: #fff" />
           </label>
           <label style="display: flex; align-items: center; gap: 8px; flex: none">
             <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); text-shadow: 0 1px 3px rgba(9,38,52,.85)">Edges</span>
-            <input type="range" min="0.2" max="3" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 96px; accent-color: #fff" />
+            <input type="range" min="0.2" max="5" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 96px; accent-color: #fff" />
           </label>
         </div>
         <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px">
@@ -141,7 +141,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;nodeCount&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10000,&quot;min&quot;:2000,&quot;max&quot;:400000,&quot;step&quot;:2000,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;zoom&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:4,&quot;min&quot;:1,&quot;max&quot;:8,&quot;step&quot;:0.5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;driftSpeed&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.3,&quot;min&quot;:0,&quot;max&quot;:2,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;parallax&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.07,&quot;min&quot;:0,&quot;max&quot;:0.4,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;mass&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1,&quot;min&quot;:0.3,&quot;max&quot;:3,&quot;step&quot;:0.1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;,&quot;unit&quot;:&quot;×&quot;}}">
 class Component extends DCLogic {
-  state = { variant: "b", mode: "pending", drawn: 0, nodes: 50000, density: 1, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
+  state = { variant: "b", mode: "pending", drawn: 0, nodes: 150000, density: 0.4, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
 
   componentDidMount() {
     // Do NOT null glCanvas/fbCanvas here: the ref callbacks in renderVals have

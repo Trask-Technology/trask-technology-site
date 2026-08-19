@@ -1,8 +1,12 @@
-//! Clustered graph generation + CSR adjacency.
+//! Clustered graph generation.
 //!
-//! Deterministic in `seed`. Positions are kept as `vec4` (xyz + community index
-//! in `w`) so the buffer can be bound straight to the compute shader and reused
-//! as a vertex buffer without a repack.
+//! Deterministic in `seed`. Positions are `vec4` — xyz plus the community index
+//! in `w`, which the renderer ignores but which a layout pass would need.
+//!
+//! CSR adjacency used to be built here for the WGSL compute layout. That pass
+//! went with the wgpu renderer, and building it cost a counting sort plus two
+//! allocations the size of the edge list on every regeneration — including
+//! every slider drag. It is in the git history if a layout pass returns.
 
 pub struct Rng(pub u32);
 
@@ -25,14 +29,7 @@ pub struct Graph {
     pub pos: Vec<f32>,
     /// edge endpoints, 2 indices per edge
     pub edges: Vec<u32>,
-    /// CSR row offsets, len = nodes + 1
-    pub csr_off: Vec<u32>,
-    /// CSR neighbour list, len = 2 * edges
-    pub csr_nbr: Vec<u32>,
-    /// community centres, 4 floats each
-    pub centroids: Vec<f32>,
     pub nodes: usize,
-    pub clusters: usize,
 }
 
 impl Graph {
@@ -99,29 +96,7 @@ impl Graph {
             }
         }
 
-        let (csr_off, csr_nbr) = Self::build_csr(&edges, nodes);
-        Graph { pos, edges, csr_off, csr_nbr, centroids, nodes, clusters }
-    }
-
-    /// Counting sort into CSR: one pass for degrees, one prefix sum, one scatter.
-    fn build_csr(edges: &[u32], nodes: usize) -> (Vec<u32>, Vec<u32>) {
-        let mut off = vec![0u32; nodes + 1];
-        for &v in edges {
-            off[v as usize + 1] += 1;
-        }
-        for i in 0..nodes {
-            off[i + 1] += off[i];
-        }
-        let mut nbr = vec![0u32; off[nodes] as usize];
-        let mut cursor = off.clone();
-        for e in edges.chunks_exact(2) {
-            let (a, b) = (e[0] as usize, e[1] as usize);
-            nbr[cursor[a] as usize] = b as u32;
-            cursor[a] += 1;
-            nbr[cursor[b] as usize] = a as u32;
-            cursor[b] += 1;
-        }
-        (off, nbr)
+        Graph { pos, edges, nodes }
     }
 
     pub fn edge_count(&self) -> usize {

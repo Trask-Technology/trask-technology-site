@@ -56,9 +56,14 @@ on top of the fade that mask already applies.
 ## Layout
 
 `Graph::generate` places `clusters` community centroids on a sphere shell, draws
-members around each as a gaussian cloud, wires a ring plus random intra-cluster
-edges and five bridges per cluster, then builds CSR adjacency by counting sort.
-Deterministic in `seed`.
+members around each as a gaussian cloud, then wires a ring plus random
+intra-cluster edges and five bridges per cluster. Deterministic in `seed`.
+
+It produces only what the renderer draws: positions and an edge list. CSR
+adjacency was built here for the WGSL compute layout, at the cost of a counting
+sort and two allocations the size of the edge list on every regeneration — over
+7 MB at 200k nodes, on every slider drag. A layout pass would need it back; it is
+in the git history.
 
 The layout is generated once and held still; motion is camera only. Animating it
 would need transform feedback, since WebGL2 has no compute shaders. There was a

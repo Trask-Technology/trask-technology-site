@@ -1,8 +1,8 @@
 # Rust / wasm build output
-web/pkg/
 rust/target/
 **/*.rs.bk
 Cargo.lock
+#web/pkg/ - let's include these
 
 # bundled single-file build of the site
 *-standalone.html

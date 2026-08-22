@@ -1,87 +1,65 @@
 //! Trask Technology hero graph: generation, GPU force layout, rendering.
 //!
-//! Two entry points for JS:
-//!   * `Graph`   — generation only; JS uploads and draws (used as the fallback path).
-//!   * `Stage`   — Rust owns the whole pipeline via wgpu: buffers, compute layout,
-//!                 render passes. JS hands over a canvas and calls `frame()`.
+//! One entry point for JS: `GlStage`, a WebGL2 renderer via glow.
 //!
-//! Build: wasm-pack build --target web --release --out-dir ../pkg
+//! It owns its animation frame and input listeners; the page constructs it and
+//! otherwise only forwards slider and tilt changes.
+//!
+//! There was a wgpu/WebGPU renderer here too. It was removed: WebGPU has no
+//! point sprites, so a node cost six vertices against WebGL2's one, and the
+//! compute layout pass — the only thing it could do that WebGL2 cannot — was
+//! never switched on. See git history if it is wanted back.
+//!
+//! Build: see the Makefile in this directory.
 
+mod camera;
+mod gl;
 mod graph;
-#[cfg(feature = "render")]
-mod gpu;
+mod host;
 
 use graph::Graph as G;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
-pub struct Graph {
-    inner: G,
-}
-
-#[wasm_bindgen]
-impl Graph {
-    /// `nodes` vertices in `clusters` communities; `density` scales edge count.
-    #[wasm_bindgen(constructor)]
-    pub fn new(nodes: usize, clusters: usize, density: f32, seed: u32) -> Graph {
-        Graph { inner: G::generate(nodes, clusters, density, seed) }
+impl host::Scene for gl::Renderer {
+    // the page's JS WebGL2 path used 1.5 * dpr for gl_PointSize; a point sprite
+    // and an expanded quad need different values to look the same
+    fn point_scale(&self) -> f32 { 1.5 }
+    fn resize(&mut self, w: u32, h: u32) { gl::Renderer::resize(self, w, h) }
+    fn set_graph(&mut self, g: &G) { gl::Renderer::set_graph(self, g) }
+    fn draw(&mut self, rot: [f32; 9], scale: f32, point_px: f32) {
+        self.frame(rot, scale, point_px)
     }
-
-    pub fn node_count(&self) -> usize { self.inner.nodes }
-    pub fn edge_count(&self) -> usize { self.inner.edge_count() }
-    pub fn cluster_count(&self) -> usize { self.inner.clusters }
-
-    /// `nodes * 4` f32: xyz + community index. Views into wasm memory — no copy.
-    pub fn positions_ptr(&self) -> *const f32 { self.inner.pos.as_ptr() }
-    pub fn edges_ptr(&self) -> *const u32 { self.inner.edges.as_ptr() }
-    pub fn csr_off_ptr(&self) -> *const u32 { self.inner.csr_off.as_ptr() }
-    pub fn csr_nbr_ptr(&self) -> *const u32 { self.inner.csr_nbr.as_ptr() }
-    pub fn csr_nbr_len(&self) -> usize { self.inner.csr_nbr.len() }
-    pub fn centroids_ptr(&self) -> *const f32 { self.inner.centroids.as_ptr() }
 }
 
-/// Rust-owned renderer. `Stage::create` is async because adapter/device
-/// acquisition is; await it before the first `frame()`.
-#[cfg(feature = "render")]
+/// The hero: generation, camera and rendering, all in Rust. `start` registers
+/// its own animation frame and input listeners and runs until `stop`.
 #[wasm_bindgen]
-pub struct Stage {
-    renderer: gpu::Renderer,
-    nodes: usize,
-    edges: usize,
+pub struct GlStage {
+    h: host::Handle<gl::Renderer>,
 }
 
-#[cfg(feature = "render")]
 #[wasm_bindgen]
-impl Stage {
-    #[wasm_bindgen]
-    pub async fn create(
+impl GlStage {
+    /// Synchronous: WebGL2 has no adapter to await.
+    pub fn start(
         canvas: web_sys::HtmlCanvasElement,
         nodes: usize,
         clusters: usize,
         density: f32,
         seed: u32,
-    ) -> Result<Stage, JsValue> {
+    ) -> Result<GlStage, JsValue> {
         let g = G::generate(nodes, clusters, density, seed);
-        let (w, h) = (canvas.width().max(1), canvas.height().max(1));
-        let target = wgpu::SurfaceTarget::Canvas(canvas);
-        let renderer = gpu::Renderer::new(target, w, h, &g)
-            .await
-            .map_err(|e| JsValue::from_str(&e))?;
-        Ok(Stage { renderer, nodes: g.nodes, edges: g.edge_count() })
+        let renderer = gl::Renderer::new(&canvas, &g).map_err(|e| JsValue::from_str(&e))?;
+        Ok(GlStage { h: host::Handle::start(host::Host::new(renderer, canvas, &g, clusters, density, seed)) })
     }
 
-    pub fn node_count(&self) -> usize { self.nodes }
-    pub fn edge_count(&self) -> usize { self.edges }
-
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.renderer.resize(width, height);
+    pub fn stop(&mut self) { self.h.stop() }
+    pub fn set_params(&self, nodes: usize, clusters: usize, density: f32) { self.h.set_params(nodes, clusters, density) }
+    pub fn set_camera(&self, zoom: f32, drift_speed: f32, parallax: f32, mass: f32) {
+        self.h.set_camera(zoom, drift_speed, parallax, mass)
     }
-
-    /// `rot` is a column-major 3x3 rotation, 9 floats.
-    pub fn frame(&mut self, rot: &[f32], scale: f32, point_px: f32, simulate: bool, dt: f32) {
-        if rot.len() < 9 { return; }
-        let mut r = [0.0f32; 9];
-        r.copy_from_slice(&rot[..9]);
-        self.renderer.frame(r, scale, point_px, simulate, dt);
-    }
+    pub fn set_tilting(&self, on: bool) { self.h.set_tilting(on) }
+    pub fn set_pointer(&self, x: f32, y: f32) { self.h.set_pointer(x, y) }
+    pub fn node_count(&self) -> usize { self.h.nodes() }
+    pub fn edge_count(&self) -> usize { self.h.edges() }
 }

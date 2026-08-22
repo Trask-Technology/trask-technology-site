@@ -43,8 +43,6 @@
 
   <section style="position: relative; min-height: 100vh; background: #154F69; overflow: hidden; display: flex; align-items: center">
     <div style="{{ canvasWrapStyle }}">
-      <canvas ref="{{ wgpuRef }}" style="{{ wgpuCanvasStyle }}"></canvas>
-      <canvas ref="{{ gpuRef }}" style="{{ gpuCanvasStyle }}"></canvas>
       <canvas ref="{{ glRef }}" style="{{ glCanvasStyle }}"></canvas>
       <canvas ref="{{ fbRef }}" style="{{ fbCanvasStyle }}"></canvas>
     </div>
@@ -61,11 +59,11 @@
         <div style="{{ heroSliderRowStyle }}">
           <label style="display: flex; align-items: center; gap: 8px; flex: none">
             <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); text-shadow: 0 1px 3px rgba(9,38,52,.85)">Nodes</span>
-            <input type="range" min="10000" max="200000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 96px; accent-color: #fff" />
+            <input type="range" min="100000" max="500000" step="10000" value="{{ nodeSlider }}" onInput="{{ onNodes }}" style="width: 96px; accent-color: #fff" />
           </label>
           <label style="display: flex; align-items: center; gap: 8px; flex: none">
             <span style="font-family: ui-monospace, Menlo, monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.75); text-shadow: 0 1px 3px rgba(9,38,52,.85)">Edges</span>
-            <input type="range" min="0.2" max="3" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 96px; accent-color: #fff" />
+            <input type="range" min="0.2" max="5" step="0.1" value="{{ densitySlider }}" onInput="{{ onDensity }}" style="width: 96px; accent-color: #fff" />
           </label>
         </div>
         <div style="display: flex; gap: 14px; flex-wrap: wrap; margin-top: 34px">
@@ -143,7 +141,7 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props="{&quot;nodeCount&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10000,&quot;min&quot;:2000,&quot;max&quot;:400000,&quot;step&quot;:2000,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;zoom&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:4,&quot;min&quot;:1,&quot;max&quot;:8,&quot;step&quot;:0.5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;driftSpeed&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.3,&quot;min&quot;:0,&quot;max&quot;:2,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;parallax&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.07,&quot;min&quot;:0,&quot;max&quot;:0.4,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;},&quot;mass&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1,&quot;min&quot;:0.3,&quot;max&quot;:3,&quot;step&quot;:0.1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Hero graph&quot;,&quot;unit&quot;:&quot;×&quot;}}">
 class Component extends DCLogic {
-  state = { variant: "b", mode: "pending", drawn: 0, nodes: 50000, density: 1, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
+  state = { variant: "b", mode: "pending", drawn: 0, nodes: 150000, density: 0.4, building: false, narrow: innerWidth < 880, tiny: innerWidth < 700 };
 
   componentDidMount() {
     // Do NOT null glCanvas/fbCanvas here: the ref callbacks in renderVals have
@@ -178,15 +176,13 @@ class Component extends DCLogic {
       const narrow = innerWidth < 880, tiny = innerWidth < 700;
       if (narrow !== this.state.narrow || tiny !== this.state.tiny) this.setState({ narrow, tiny });
       if (this.state.mode !== "full") { this.drawFallback(); return; }
-      if (this.gpuR) this.gpuR.resize(); else this.resize();
+      // the Rust host re-reads the canvas size every frame and resizes itself
     };
     addEventListener("resize", this._onResize);
     addEventListener("orientationchange", this._onResize);
     visualViewport?.addEventListener("resize", this._onResize);
     // catch layout-driven size changes the window events miss
     this._ro = new ResizeObserver(() => this._onResize());
-    if (this.gpuCanvas) this._ro.observe(this.gpuCanvas);
-    if (this.wgpuCanvas) this._ro.observe(this.wgpuCanvas);
     if (this.glCanvas) this._ro.observe(this.glCanvas);
   }
 
@@ -200,7 +196,9 @@ class Component extends DCLogic {
     removeEventListener("wheel", this._onWheel);
     if (this._onTilt) removeEventListener("deviceorientation", this._onTilt);
     if (this._onMotion) removeEventListener("devicemotion", this._onMotion);
-    cancelAnimationFrame(this._raf);
+    clearInterval(this._statusT);
+    // detaches Rust's own rAF and input listeners
+    if (this.stage) { this.stage.stop(); this.stage = null; }
   }
 
   probeGL() {
@@ -271,286 +269,67 @@ class Component extends DCLogic {
 
   // Prefer the Rust/wasm generator (rust/README.md — wasm-pack build into ./pkg).
   // Falls back to the JS generator when the wasm bundle has not been built.
-  async buildGraphBest(n, clusters) {
-    try {
-      const mod = await import("./pkg/trask_graph.js");
-      const wasm = await mod.default();
-      const g = new mod.Graph(n, clusters, this.state.density, 1337);
-      const nodes = g.node_count(), edgeCount = g.edge_count(), cl = g.cluster_count();
-      // Rust stores xyz + community index per node; split out what the drawing wants
-      const pos4 = new Float32Array(wasm.memory.buffer, g.positions_ptr(), nodes * 4);
-      const pos = new Float32Array(nodes * 3), owner = new Uint16Array(nodes);
-      for (let i = 0; i < nodes; i++) {
-        pos[i * 3] = pos4[i * 4]; pos[i * 3 + 1] = pos4[i * 4 + 1]; pos[i * 3 + 2] = pos4[i * 4 + 2];
-        owner[i] = pos4[i * 4 + 3];
-      }
-      const idx = new Uint32Array(wasm.memory.buffer, g.edges_ptr(), edgeCount * 2).slice();
-      const csrOff = new Uint32Array(wasm.memory.buffer, g.csr_off_ptr(), nodes + 1).slice();
-      const csrNbr = new Uint32Array(wasm.memory.buffer, g.csr_nbr_ptr(), g.csr_nbr_len()).slice();
-      const centroids = new Float32Array(wasm.memory.buffer, g.centroids_ptr(), cl * 4).slice();
-      this.engine = "rust/wasm";
-      return { pos, idx, n: nodes, owner, clusters: cl, centroids, csrOff, csrNbr };
-    } catch (e) {
-      this.engine = "js fallback";
-      return this.buildGraph(n, clusters);
-    }
-  }
 
   // WebGPU where available (Chrome/Edge 113+, Firefox 141+, Safari 26+), WebGL2 otherwise.
   // Regenerate and re-upload without tearing down the device/context.
   rebuild = () => {
     clearTimeout(this._rebuildT);
     this.setState({ building: true });
-    this._rebuildT = setTimeout(async () => {
+    this._rebuildT = setTimeout(() => {
       const n = this.state.nodes;
-      // The Rust path keeps its buffers on the GPU and never hands them back, so
-      // there is nothing to re-upload the way the WebGPU/WebGL branches below do.
-      // Tear the Stage down — freeing its device, buffers and wasm memory — and
-      // build a fresh one at the new size.
       if (this.stage) {
-        cancelAnimationFrame(this._raf);
-        const old = this.stage;
-        this.stage = null;
-        old.free();
-        if (await this.tryRustStage(n)) return;
-        // Could not rebuild it; start a renderer over from scratch rather than
-        // dropping into the branches below with no live context.
-        this.api = null;
-        this.setState({ building: false });
-        return this.initRender();
+        // Regenerate on the existing device — no teardown just to resize.
+        this.stage.set_params(n, 34, this.state.density);
+        this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
+        this.setState({ drawn: this.stage.node_count(), building: false });
+        return;
       }
-      const g = await this.buildGraphBest(n, 34);
-      this.setState({ building: false });
-      this.graph = g;
-      if (this.gpuR) this.gpuR.setGraph(g);
-      else if (this.gl) {
-        const gl = this.gl;
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
-        gl.bufferData(gl.ARRAY_BUFFER, g.pos, gl.STATIC_DRAW);
-        gl.bindVertexArray(this.vaoLine);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ebo);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.idx, gl.STATIC_DRAW);
-        gl.bindVertexArray(null);
-      } else { this.drawFallback(); return; }
-      this.setState({ drawn: g.n });
+      this.setState({ building: false }, () => this.drawFallback());
     }, 160);
   };
 
-  // Rust/wgpu owning the whole pipeline is the preferred path when built.
-  async tryRustStage(n) {
+
+  // Rust on WebGL2: same host, same camera, but nodes are real point sprites
+  // rather than expanded quads. Synchronous — there is no adapter to await.
+  async tryRustGl(n) {
     try {
-      // Bail before touching the canvas when WebGPU is absent: creating the
-      // surface claims the element's context, and gpu-renderer.js could not then
-      // get a clean one for its own fallback path.
-      if (!navigator.gpu) return this.noStage("navigator.gpu is undefined — browser has no WebGPU");
+      if (!this.glCanvas) return false;
       const mod = await import("./pkg/trask_graph.js");
-      if (!mod.Stage) return this.noStage("pkg has no Stage export — built with --no-default-features");
-      if (!this.wgpuCanvas) return this.noStage("wgpuCanvas ref is not populated yet");
       await mod.default();
-      const cv = this.wgpuCanvas;
-      const dpr = Math.min(devicePixelRatio || 1, 1.5);
-      // The canvas is still display:none at this point (api is unset until the
-      // next render), so clientWidth is 0 — measure the laid-out wrapper instead.
-      const box = cv.parentElement;
-      const cw = cv.clientWidth || (box && box.clientWidth) || innerWidth;
-      const ch = cv.clientHeight || (box && box.clientHeight) || innerHeight;
-      cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
-      this.stage = await mod.Stage.create(cv, n, 34, this.state.density, 1337);
-      this.engine = "rust/wasm"; this.api = "rust/wgpu";
+      if (!mod.GlStage) return this.noStage("pkg has no GlStage export — built without the webgl feature");
+      const cv = this.glCanvas;
+      this.stage = mod.GlStage.start(cv, n, 34, this.state.density, 1337);
+      this.engine = "rust/wasm"; this.api = "rust/webgl2";
+      // the dc runtime supplies its own prop defaults (zoom 4), which are not
+      // the ?? fallbacks in this file — pass the real values through
+      this.stage.set_camera(this.props.zoom ?? 1.7, this.props.driftSpeed ?? 0.3,
+                            this.props.parallax ?? 0.07, this.props.mass ?? 1);
       this.graph = { n: this.stage.node_count(), idx: { length: this.stage.edge_count() * 2 } };
       this.setState({ drawn: this.stage.node_count(), building: false });
-      this.t0 = performance.now();
-      this.loop();
+      clearInterval(this._statusT);
+      this._statusT = setInterval(() => this.forceUpdate(), 400);
       return true;
     } catch (e) { this.stage = null; return this.noStage(e); }
   }
 
-  // Every rust/wgpu bail-out routes through here: the fallbacks are silent
-  // otherwise, and the status line only reports which path won, not why.
+  // The fallback to the 2D preview is otherwise silent, and the status line
+  // reports which path won rather than why.
   noStage(why) {
     this.stageWhy = String((why && why.message) || why);
-    console.warn("[hero] rust/wgpu unavailable, falling back:", why);
+    console.warn("[hero] rust/webgl2 unavailable, falling back:", why);
     return false;
   }
 
+  // Rust covers both WebGPU and WebGL2 now; the 2D preview is the only fallback.
+  // Rust covers both WebGPU and WebGL2 now; the 2D preview is the only fallback.
   async initRender() {
     const n = this.state.nodes;
-    if (await this.tryRustStage(n)) return;
-    const g = await this.buildGraphBest(n, 34);
-    if (!this.gpuCanvas && !this.glCanvas) return;
-    this.graph = g;
-    try {
-      const mod = await import("./gpu-renderer.js");
-      this.gpuR = await mod.createGPURenderer(this.gpuCanvas, g);
-    } catch (e) {
-      this.gpuR = null;
-      this.gpuWhy = String((e && e.message) || e);
-      console.warn("[hero] webgpu renderer unavailable, falling back:", e);
-    }
-    if (this.gpuR) {
-      this.api = "webgpu";
-      this.setState({ drawn: g.n });
-      this.t0 = performance.now();
-      this.loop();
-      return;
-    }
-    this.initGL(g);
+    if (await this.tryRustGl(n)) return;
+    this.setState({ mode: "static" }, () => this.drawFallback());
   }
 
-  initGL(g) {
-    const cv = this.glCanvas; if (!cv || this.gl) return;
-    const gl = cv.getContext("webgl2", { antialias: false, alpha: false, powerPreference: "high-performance" });
-    if (!gl) { this.setState({ mode: "static" }, () => this.drawFallback()); return; }
-    this.gl = gl;
-    this.api = "webgl2";
-    const n = g.n;
 
-    const vs = `#version 300 es
-      in vec3 aPos; uniform mat3 uRot; uniform float uScale; uniform vec2 uFix; uniform float uPt;
-      out float vD;
-      void main(){
-        vec3 p = uRot * aPos;
-        float persp = 1.0 / (2.0 - p.z * 0.45);
-        vD = p.z;
-        gl_Position = vec4(p.xy * uScale * persp * uFix, 0.0, 1.0);
-        gl_PointSize = uPt * (0.75 + 0.6 * (p.z + 1.0));
-      }`;
-    const fsPoint = `#version 300 es
-      precision mediump float; in float vD; uniform float uA; out vec4 o;
-      void main(){
-        vec2 d = gl_PointCoord - 0.5;
-        if (dot(d, d) > 0.25) discard;
-        float f = 0.28 + 0.72 * smoothstep(-1.1, 1.0, vD);
-        o = vec4(1.0, 1.0, 1.0, uA * f);
-      }`;
-    const fsLine = `#version 300 es
-      precision mediump float; in float vD; uniform float uA; out vec4 o;
-      void main(){ float f = 0.2 + 0.8 * smoothstep(-1.1, 1.0, vD); o = vec4(0.86, 0.93, 0.96, uA * f); }`;
 
-    const mk = (vsrc, fsrc) => {
-      const sh = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); return s; };
-      const p = gl.createProgram();
-      gl.attachShader(p, sh(gl.VERTEX_SHADER, vsrc)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fsrc));
-      gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.warn(gl.getProgramInfoLog(p));
-      return p;
-    };
-    this.pPoint = mk(vs, fsPoint); this.pLine = mk(vs, fsLine);
-
-    const vbo = gl.createBuffer();
-    this.vbo = vbo;
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bufferData(gl.ARRAY_BUFFER, g.pos, gl.STATIC_DRAW);
-    const setupVao = prog => {
-      const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-      const loc = gl.getAttribLocation(prog, "aPos");
-      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-      return vao;
-    };
-    this.vaoPoint = setupVao(this.pPoint);
-    this.vaoLine = setupVao(this.pLine);
-    this.ebo = gl.createBuffer();
-    gl.bindVertexArray(this.vaoLine);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ebo);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.idx, gl.STATIC_DRAW);
-    gl.bindVertexArray(null);
-
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.clearColor(0.0824, 0.3098, 0.4118, 1);
-    this.resize();
-    this.setState({ drawn: n });
-    this.t0 = performance.now();
-    this.loop();
-  }
-
-  resize() {
-    const cv = this.glCanvas, gl = this.gl; if (!cv || !gl) return;
-    const dpr = Math.min(devicePixelRatio || 1, 1.5);
-    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr);
-    gl.viewport(0, 0, cv.width, cv.height);
-  }
-
-  loop = () => {
-    this._raf = requestAnimationFrame(this.loop);
-    const cv = this.stage ? this.wgpuCanvas : this.gpuR ? this.gpuCanvas : this.glCanvas;
-    if (!cv || (!this.gpuR && !this.gl && !this.stage)) return;
-    if (document.hidden || cv.getBoundingClientRect().bottom < 0) return;
-    if (!this.gpuR && !this.stage && cv.width !== Math.round(cv.clientWidth * Math.min(devicePixelRatio || 1, 1.5))) this.resize();
-    const gl = this.gl;
-
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - (this._last || now)) / 1000);
-    this._last = now;
-    const speed = this.props.driftSpeed ?? 0.3;
-    const t = (now - this.t0) / 1000 * 0.055 * speed;
-    // Pointer parallax as a heavy spring-damper: the mass accelerates slowly,
-    // keeps moving after the cursor stops, and settles without snapping.
-    const par = this.props.parallax ?? 0.07;
-    const mass = this.props.mass ?? 1;
-    const k = 0.0016 / mass;      // weak spring — slow to get going
-    const damp = 1 - 0.028 * (1 / mass); // little friction — long coast
-    const tilting = this.state.motion === "on";
-    if (tilting) {
-      // device tilt is a direct 1:1 look-around — no spring, no smoothing
-      this.pmx = this.mx; this.pmy = this.my;
-      this.vx = 0; this.vy = 0;
-    } else {
-      this.vx = (this.vx || 0) + (this.mx - this.pmx) * k;
-      this.vy = (this.vy || 0) + (this.my - this.pmy) * k;
-      this.vx *= damp; this.vy *= damp;
-      this.pmx += this.vx; this.pmy += this.vy;
-    }
-    const look = tilting ? 4.5 : 1;
-    const yaw = t - this.pmx * par * 0.9 * look;
-    const ca = Math.cos(yaw), sa = Math.sin(yaw);
-    const tilt = 0.42 + Math.sin(t * 0.55) * 0.12 - this.pmy * par * 0.7 * look;
-
-    // dolly carries the same mass as the parallax
-    this.dv += (this.dollyTarget - this.dolly) * 0.0055 / mass;
-    this.dv *= 1 - 0.045 * (1 / mass);
-    this.dolly += this.dv;
-    const cb = Math.cos(tilt), sb = Math.sin(tilt);
-    // rotate about Y then tilt about X (column-major mat3)
-    const R = [ca, sb * sa, -cb * sa, 0, cb, sb, sa, -sb * ca, cb * ca];
-    const aspect = cv.width / cv.height;
-    const fix = [Math.min(1, 1 / aspect), Math.min(1, aspect)];
-    const scale = (this.props.zoom ?? 1.7) * 1.55 * this.dolly;
-    const dpr = Math.min(devicePixelRatio || 1, 1.5);
-
-    // frame time, measured — an EMA of real rAF deltas, not a target
-    this.ms = this.ms ? this.ms * 0.9 + dt * 1000 * 0.1 : dt * 1000;
-    if (now - (this._reported || 0) > 400) { this._reported = now; this.forceUpdate(); }
-
-    if (this.stage) {
-      this.stage.resize(cv.clientWidth * dpr | 0, cv.clientHeight * dpr | 0);
-      this.stage.frame(new Float32Array(R), scale, 1.1 * dpr, false, 0.016);
-      return;
-    }
-    if (this.gpuR) {
-      this.gpuR.sim.on = false;
-      this.gpuR.frame(R, fix, scale, 1.1 * dpr);
-      return;
-    }
-
-    gl.clear(gl.COLOR_BUFFER_BIT);
-
-    gl.useProgram(this.pLine); gl.bindVertexArray(this.vaoLine);
-    gl.uniformMatrix3fv(gl.getUniformLocation(this.pLine, "uRot"), false, R);
-    gl.uniform1f(gl.getUniformLocation(this.pLine, "uScale"), scale);
-    gl.uniform2fv(gl.getUniformLocation(this.pLine, "uFix"), fix);
-    gl.uniform1f(gl.getUniformLocation(this.pLine, "uA"), 0.035);
-    gl.uniform1f(gl.getUniformLocation(this.pLine, "uPt"), 1);
-    gl.drawElements(gl.LINES, this.graph.idx.length, gl.UNSIGNED_INT, 0);
-
-    gl.useProgram(this.pPoint); gl.bindVertexArray(this.vaoPoint);
-    gl.uniformMatrix3fv(gl.getUniformLocation(this.pPoint, "uRot"), false, R);
-    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uScale"), scale);
-    gl.uniform2fv(gl.getUniformLocation(this.pPoint, "uFix"), fix);
-    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uA"), 0.5);
-    gl.uniform1f(gl.getUniformLocation(this.pPoint, "uPt"), 1.5 * dpr);
-    gl.drawArrays(gl.POINTS, 0, this.graph.n);
-    gl.bindVertexArray(null);
-  };
 
   drawFallback() {
     const cv = this.fbCanvas; if (!cv) return;
@@ -589,8 +368,10 @@ class Component extends DCLogic {
       // and flip as the screen rotates — remap into screen space first.
       this.mx = Math.max(-1, Math.min(1, (e.gamma || 0) / 38));
       this.my = Math.max(-1, Math.min(1, ((e.beta || 0) - 42) / 34));
+      if (this.stage) this.stage.set_pointer(this.mx, this.my);
     };
     addEventListener("deviceorientation", this._onTilt, { passive: true });
+    if (this.stage) this.stage.set_tilting(true);
     this.setState({ motion: "on" });
   };
 
@@ -619,13 +400,8 @@ class Component extends DCLogic {
     // Only the full graph goes through this.api; the preview is drawn on the 2D
     // fallback canvas, which no api string covers.
     const renderer = full ? (this.api || "webgl2") : "canvas2d";
-    // Both WebGPU paths draw into gpuCanvas — "rust/wgpu" counts as well as
-    // "webgpu", or Rust renders into a hidden canvas behind an empty GL one.
-    const gpuActive = this.api === "webgpu" || this.api === "rust/wgpu";
     return {
       glRef: el => { this.glCanvas = el; },
-      gpuRef: el => { this.gpuCanvas = el; },
-      wgpuRef: el => { this.wgpuCanvas = el; },
       fbRef: el => { this.fbCanvas = el; },
       pickA: () => this.setState({ variant: "a" }),
       pickB: () => this.setState({ variant: "b" }),
@@ -642,14 +418,17 @@ class Component extends DCLogic {
       showMotionButton: full && this.coarse && this.state.motion !== "on" && this.state.motion !== "unavailable",
       graphEngine: [
         `layout: ${this.engine || "js"}`,
-        `sim: ${this.stage || (this.gpuR && this.gpuR.computeLayout) ? "gpu compute (idle)" : "static"}`,
         `draw: ${renderer}`,
-        `webgpu in browser: ${navigator.gpu ? "yes" : "no"}`,
-        // Chrome only exposes navigator.gpu in a secure context: https, or
-        // localhost/127.0.0.1 exactly. A LAN or WSL IP over http hides WebGPU.
+// iOS gates device orientation on a secure context too, so this stays useful
         `secure context: ${isSecureContext ? "yes" : `no (${location.origin})`}`,
-        this.stageWhy ? `no rust/wgpu: ${this.stageWhy}` : null,
-        this.gpuWhy ? `no webgpu: ${this.gpuWhy}` : null,
+        // Backing resolution decides how large a 1px line and a point sprite
+        // look, so a mismatch here is the first thing to check when one
+        // renderer's primitives look bigger than another's.
+        (() => {
+          const cv = this.glCanvas;
+          return cv ? `canvas: ${cv.width}x${cv.height} css ${cv.clientWidth}x${cv.clientHeight} dpr ${(devicePixelRatio || 1).toFixed(2)}` : null;
+        })(),
+        this.stageWhy ? `no rust/webgl2: ${this.stageWhy}` : null,
       ].filter(Boolean).join(" · "),
       graphStatus: this.state.building
         ? "building graph…"
@@ -665,9 +444,7 @@ class Component extends DCLogic {
           maskImage: mask, WebkitMaskImage: mask
         };
       })(),
-      glCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && !gpuActive ? "block" : "none" },
-      gpuCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "webgpu" ? "block" : "none" },
-      wgpuCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "rust/wgpu" ? "block" : "none" },
+      glCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full && this.api === "rust/webgl2" ? "block" : "none" },
       fbCanvasStyle: { position: "absolute", inset: 0, width: "100%", height: "100%", display: full ? "none" : "block" },
       heroTextWrapStyle: {
         position: "relative", zIndex: 10, width: "100%", padding: split ? "clamp(96px, 13vw, 150px) clamp(22px, 5vw, 48px) 96px" : "140px 48px 110px",

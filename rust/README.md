@@ -1,76 +1,84 @@
-# trask_graph — hero graph: generation, GPU layout, rendering
+# trask_graph — hero graph: generation, camera, WebGL2 rendering
 
-Two ways in, both exported to wasm:
+One entry point, `GlStage`. It generates the graph, owns the WebGL2 context and
+the camera, registers its own animation frame and pointer/wheel listeners, and
+runs until `stop`. The page constructs it and otherwise only forwards slider and
+tilt changes.
 
-| Entry | Owns | Used when |
-|---|---|---|
-| `Graph` | generation + CSR adjacency | JS draws (WebGPU or WebGL2 path) |
-| `Stage` | the whole pipeline via `wgpu` — buffers, compute layout, render passes | Rust drives the GPU |
-
-The force layout is a WGSL compute shader (`src/shaders/sim.wgsl`): one invocation
-per node, springs along the node's CSR neighbour slice, repulsion against community
-centroids (O(clusters), not O(n²)), then integration. Positions live in a storage
-buffer that the render pass binds directly as a vertex buffer — nothing is copied
-back to the CPU between frames.
+Nodes are drawn as **point sprites** — `gl_PointSize` plus a circular `discard`
+on `gl_PointCoord` — so a node costs one vertex. That is the reason this is
+WebGL2 and not WebGPU: WGSL has no point size, so the same graph would need a
+six-vertex quad per node, 1.2M vertices against 200k at 200k nodes.
 
 ## Build
 
 ```sh
-cargo install wasm-pack                     # once
-cd rust
-wasm-pack build --target web --release --out-dir ../pkg
+make          # into ../web/pkg
+make help     # the other targets
 ```
 
-Writes `pkg/trask_graph.js` + `pkg/trask_graph_bg.wasm` at the project root, where
-`Trask Technology Site.dc.html` looks for them. The page then reports
-`layout: rust/wasm` (and `draw: rust/wgpu` once `Stage` is in use) in the status
-tooltip under the hero; without the build it falls back to the JS generator.
+### A global `RUSTFLAGS` will break this
 
-Generation-only bundle (much smaller, no wgpu):
+`RUSTFLAGS` applies to every target, `wasm32-unknown-unknown` included. A host
+tuning flag such as `-C target-cpu=native` leaks into the wasm build and
+wasm-bindgen then fails with `failed to find intrinsics to enable clone_ref`.
+The Makefile strips it. Better, scope host tuning to the host target in
+`~/.cargo/config.toml`, where it cannot reach a wasm build:
 
-```sh
-wasm-pack build --target web --release --no-default-features --out-dir ../pkg
-```
-
-SIMD (128-bit) for the generation pass:
-
-```sh
-RUSTFLAGS="-C target-feature=+simd128" wasm-pack build --target web --release --out-dir ../pkg
-```
-
-## Native build
-
-The same crate runs outside the browser — `wgpu` selects Vulkan, Metal or DX12,
-and the WGSL is unchanged. Useful for profiling the layout at sizes a tab won't
-tolerate:
-
-```sh
-cargo run --release --example bench     # add your own example/bin
+```toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
 ```
 
 ## JS usage
 
 ```js
-import init, { Graph, Stage } from './pkg/trask_graph.js';
-const wasm = await init();
+import init, { GlStage } from './pkg/trask_graph.js';
+await init();
 
-// generation only
-const g = new Graph(250000, 96, 1.0, 1337);
-const pos = new Float32Array(wasm.memory.buffer, g.positions_ptr(), g.node_count() * 4);
-
-// or hand Rust the canvas and let it drive
-const stage = await Stage.create(canvas, 250000, 96, 1.0, 1337);
-stage.frame(rot3x3, scale, pointPx, true, 0.016);
+const stage = GlStage.start(canvas, 250000, 96, 1.0, 1337);
+stage.set_camera(zoom, driftSpeed, parallax, mass);
+stage.set_params(nodes, clusters, density);   // regenerates on the live context
+stage.set_tilting(true);                      // then feed set_pointer from tilt
+stage.stop();                                 // detaches frame and listeners
 ```
 
-Re-create any `Float32Array`/`Uint32Array` views after a call that can grow wasm
-memory — the backing buffer may have been reallocated.
+There is no per-frame call to make. One thing is easy to get wrong: pass the
+**host's** camera props to `set_camera`. A framework's declared defaults are not
+necessarily the `??` fallbacks written in the calling code, and getting that
+wrong silently rescales the whole scene.
+
+The context is created with `antialias: false, alpha: false` to match what the
+page needs — MSAA both softens 1px lines and point sprites and costs real fill
+rate at 5K, and an alpha channel would composite through the wrapper's CSS mask
+on top of the fade that mask already applies.
+
+## Layout
+
+`Graph::generate` places `clusters` community centroids on a sphere shell, draws
+members around each as a gaussian cloud, then wires a ring plus random
+intra-cluster edges and five bridges per cluster. Deterministic in `seed`.
+
+It produces only what the renderer draws: positions and an edge list. CSR
+adjacency was built here for the WGSL compute layout, at the cost of a counting
+sort and two allocations the size of the edge list on every regeneration — over
+7 MB at 200k nodes, on every slider drag. A layout pass would need it back; it is
+in the git history.
+
+The layout is generated once and held still; motion is camera only. Animating it
+would need transform feedback, since WebGL2 has no compute shaders. There was a
+WGSL compute force layout here when the crate also had a wgpu renderer — see git
+history.
+
+## Native build
+
+`glow` compiles against native OpenGL, so a native build is mostly a matter of
+supplying a context and a window instead of a canvas. Nothing does that yet;
+`GlStage::start` takes a `web_sys::HtmlCanvasElement`.
 
 ## Not yet done
 
-* `Stage` is written but has never been compiled here — expect small API drift
-  against your installed `wgpu` version (`SurfaceTargetUnsafe::from_window` in
-  particular moves between releases).
-* Barnes-Hut or a grid hash would replace centroid repulsion for a layout that is
-  correct rather than merely plausible.
-* Timestamp queries for real GPU-side frame timing instead of rAF deltas.
+* Barnes-Hut or a grid hash would replace centroid repulsion if the layout is
+  ever animated, for something correct rather than merely plausible.
+* No frame timing beyond the browser's own tools; nothing attributes stalls.
+* No tests.

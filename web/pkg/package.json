@@ -1,0 +1,16 @@
+{
+  "name": "trask_graph",
+  "type": "module",
+  "description": "Graph generation and WebGL2 rendering for the Trask Technology hero",
+  "version": "0.2.0",
+  "files": [
+    "trask_graph_bg.wasm",
+    "trask_graph.js",
+    "trask_graph.d.ts"
+  ],
+  "main": "trask_graph.js",
+  "types": "trask_graph.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
